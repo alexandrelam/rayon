@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import "./App.css";
 
@@ -21,6 +22,29 @@ function App() {
 
   useEffect(() => {
     inputRef.current?.focus();
+  }, []);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+
+    async function bindLauncherOpenListener() {
+      unlisten = await listen("launcher:opened", () => {
+        setQuery("");
+        setExecutionResult("");
+        setError("");
+        setSelectedIndex(0);
+        requestAnimationFrame(() => {
+          inputRef.current?.focus();
+          inputRef.current?.select();
+        });
+      });
+    }
+
+    void bindLauncherOpenListener();
+
+    return () => {
+      unlisten?.();
+    };
   }, []);
 
   useEffect(() => {
@@ -127,7 +151,11 @@ function App() {
         if (query) {
           setQuery("");
           setError("");
+          setSelectedIndex(0);
+          return;
         }
+
+        void invoke("hide_launcher");
         break;
       default:
         break;
@@ -135,7 +163,7 @@ function App() {
   }
 
   return (
-    <main className="app-shell">
+    <main className="launcher-shell">
       <section className="palette" aria-label="Command palette">
         <header className="palette-header">
           <p className="eyebrow">rayon</p>
