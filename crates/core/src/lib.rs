@@ -1,4 +1,4 @@
-use rayon_db::{AppIndexStats, SonicAppIndex};
+use rayon_db::{AppIndexStats, TantivyAppIndex};
 use rayon_platform::MacOsAppManager;
 use rayon_types::{
     CommandDefinition, CommandExecutionResult, CommandId, InstalledApp, SearchResult,
@@ -174,17 +174,17 @@ impl AppPlatform for MacOsAppManager {
     }
 }
 
-impl AppIndex for SonicAppIndex {
+impl AppIndex for TantivyAppIndex {
     fn is_configured(&self) -> bool {
-        SonicAppIndex::is_configured(self)
+        TantivyAppIndex::is_configured(self)
     }
 
     fn search_app_ids(&self, query: &str, limit: usize) -> Result<Vec<String>, String> {
-        SonicAppIndex::search_app_ids(self, query, limit).map_err(|error| error.to_string())
+        TantivyAppIndex::search_app_ids(self, query, limit).map_err(|error| error.to_string())
     }
 
     fn reindex_apps(&self, apps: &[InstalledApp]) -> Result<AppIndexStats, String> {
-        SonicAppIndex::reindex_apps(self, apps).map_err(|error| error.to_string())
+        TantivyAppIndex::reindex_apps(self, apps).map_err(|error| error.to_string())
     }
 }
 
@@ -302,7 +302,7 @@ impl LauncherService {
 
         Ok(CommandExecutionResult {
             output: format!(
-                "reindexed {} apps into Sonic ({} skipped)",
+                "reindexed {} applications ({} skipped)",
                 stats.indexed_count, stats.skipped_count
             ),
         })
@@ -516,6 +516,6 @@ mod tests {
             .execute(&CommandId::from(APP_REINDEX_COMMAND_ID), None)
             .unwrap();
 
-        assert_eq!(result.output, "reindexed 1 apps into Sonic (0 skipped)");
+        assert_eq!(result.output, "reindexed 1 applications (0 skipped)");
     }
 }

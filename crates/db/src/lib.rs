@@ -1,89 +1,15 @@
 use rayon_types::InstalledApp;
-use sonic_channel::{
-    Dest, FlushRequest, IngestChannel, PushRequest, QueryRequest, SearchChannel, SonicChannel,
-};
-use std::env;
 use std::fmt;
+use std::fs;
+use std::path::{Path, PathBuf};
+use tantivy::collector::TopDocs;
+use tantivy::directory::error::OpenDirectoryError;
+use tantivy::directory::MmapDirectory;
+use tantivy::query::QueryParser;
+use tantivy::schema::{Field, Schema, Value, STORED, STRING, TEXT};
+use tantivy::{doc, Index, IndexReader, TantivyDocument};
 
-const DEFAULT_SONIC_HOST: &str = "127.0.0.1";
-const DEFAULT_SONIC_PORT: u16 = 1491;
-const DEFAULT_SONIC_COLLECTION: &str = "apps";
-const DEFAULT_SONIC_BUCKET: &str = "macos";
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SonicConfig {
-    pub host: String,
-    pub port: u16,
-    pub password: String,
-    pub collection: String,
-    pub bucket: String,
-}
-
-impl SonicConfig {
-    pub fn from_env() -> Result<Option<Self>, SonicConfigError> {
-        let password = match env::var("RAYON_SONIC_PASSWORD") {
-            Ok(value) if !value.trim().is_empty() => value,
-            Ok(_) => return Ok(None),
-            Err(env::VarError::NotPresent) => return Ok(None),
-            Err(error) => return Err(SonicConfigError::InvalidValue(error.to_string())),
-        };
-
-        let host = env::var("RAYON_SONIC_HOST").ok();
-        let port = match env::var("RAYON_SONIC_PORT") {
-            Ok(value) => Some(value),
-            Err(env::VarError::NotPresent) => None,
-            Err(error) => return Err(SonicConfigError::InvalidValue(error.to_string())),
-        };
-        let collection = env::var("RAYON_SONIC_COLLECTION").ok();
-        let bucket = env::var("RAYON_SONIC_BUCKET").ok();
-
-        Self::from_values(password, host, port, collection, bucket).map(Some)
-    }
-
-    fn from_values(
-        password: String,
-        host: Option<String>,
-        port: Option<String>,
-        collection: Option<String>,
-        bucket: Option<String>,
-    ) -> Result<Self, SonicConfigError> {
-        let port = match port {
-            Some(value) => value
-                .parse::<u16>()
-                .map_err(|_| SonicConfigError::InvalidPort(value))?,
-            None => DEFAULT_SONIC_PORT,
-        };
-
-        Ok(Self {
-            host: host.unwrap_or_else(|| DEFAULT_SONIC_HOST.into()),
-            port,
-            password,
-            collection: collection.unwrap_or_else(|| DEFAULT_SONIC_COLLECTION.into()),
-            bucket: bucket.unwrap_or_else(|| DEFAULT_SONIC_BUCKET.into()),
-        })
-    }
-
-    pub fn address(&self) -> String {
-        format!("{}:{}", self.host, self.port)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SonicConfigError {
-    InvalidPort(String),
-    InvalidValue(String),
-}
-
-impl fmt::Display for SonicConfigError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidPort(value) => write!(f, "invalid RAYON_SONIC_PORT value: {value}"),
-            Self::InvalidValue(value) => write!(f, "invalid Sonic environment value: {value}"),
-        }
-    }
-}
-
-impl std::error::Error for SonicConfigError {}
+const INDEX_WRITER_HEAP_BYTES: usize = 50_000_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppIndexStats {
@@ -92,88 +18,165 @@ pub struct AppIndexStats {
     pub skipped_count: usize,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SonicIndexError {
-    NotConfigured,
-    Config(SonicConfigError),
-    Transport(String),
+#[derive(Debug)]
+pub enum TantivyAppIndexError {
+    Io(std::io::Error),
+    Directory(OpenDirectoryError),
+    Backend(tantivy::TantivyError),
 }
 
-impl fmt::Display for SonicIndexError {
+impl fmt::Display for TantivyAppIndexError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::NotConfigured => write!(
-                f,
-                "Sonic is not configured. Set RAYON_SONIC_PASSWORD to enable app search and indexing."
-            ),
-            Self::Config(error) => write!(f, "{error}"),
-            Self::Transport(error) => write!(f, "{error}"),
+            Self::Io(error) => write!(f, "{error}"),
+            Self::Directory(error) => write!(f, "{error}"),
+            Self::Backend(error) => write!(f, "{error}"),
         }
     }
 }
 
-impl std::error::Error for SonicIndexError {}
+impl std::error::Error for TantivyAppIndexError {}
 
-pub struct SonicAppIndex {
-    config: Option<SonicConfig>,
+impl From<std::io::Error> for TantivyAppIndexError {
+    fn from(value: std::io::Error) -> Self {
+        Self::Io(value)
+    }
 }
 
-impl SonicAppIndex {
-    pub fn from_env() -> Result<Self, SonicIndexError> {
-        let config = SonicConfig::from_env().map_err(SonicIndexError::Config)?;
-        Ok(Self { config })
+impl From<OpenDirectoryError> for TantivyAppIndexError {
+    fn from(value: OpenDirectoryError) -> Self {
+        Self::Directory(value)
+    }
+}
+
+impl From<tantivy::TantivyError> for TantivyAppIndexError {
+    fn from(value: tantivy::TantivyError) -> Self {
+        Self::Backend(value)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct AppIndexFields {
+    id: Field,
+    title: Field,
+    bundle_identifier: Field,
+    bundle_name: Field,
+}
+
+impl AppIndexFields {
+    fn build_schema() -> (Schema, Self) {
+        let mut schema_builder = Schema::builder();
+        let id = schema_builder.add_text_field("id", STRING | STORED);
+        let title = schema_builder.add_text_field("title", TEXT);
+        let bundle_identifier = schema_builder.add_text_field("bundle_identifier", TEXT);
+        let bundle_name = schema_builder.add_text_field("bundle_name", TEXT);
+        let schema = schema_builder.build();
+
+        (
+            schema,
+            Self {
+                id,
+                title,
+                bundle_identifier,
+                bundle_name,
+            },
+        )
+    }
+}
+
+pub struct TantivyAppIndex {
+    index: Index,
+    reader: IndexReader,
+    fields: AppIndexFields,
+    path: PathBuf,
+}
+
+impl TantivyAppIndex {
+    pub fn open_or_create(path: impl AsRef<Path>) -> Result<Self, TantivyAppIndexError> {
+        let path = path.as_ref().to_path_buf();
+        fs::create_dir_all(&path)?;
+
+        let (schema, fields) = AppIndexFields::build_schema();
+        let directory = MmapDirectory::open(&path)?;
+        let index = Index::open_or_create(directory, schema)?;
+        let reader = index.reader()?;
+
+        Ok(Self {
+            index,
+            reader,
+            fields,
+            path,
+        })
     }
 
     pub fn is_configured(&self) -> bool {
-        self.config.is_some()
+        true
     }
 
     pub fn search_app_ids(
         &self,
         query: &str,
         limit: usize,
-    ) -> Result<Vec<String>, SonicIndexError> {
+    ) -> Result<Vec<String>, TantivyAppIndexError> {
         let query = query.trim();
-        if query.is_empty() || !self.is_configured() {
+        if query.is_empty() || limit == 0 {
             return Ok(Vec::new());
         }
 
-        let config = self.config.as_ref().ok_or(SonicIndexError::NotConfigured)?;
-        let channel = SearchChannel::start(config.address(), &config.password)
-            .map_err(|error| SonicIndexError::Transport(error.to_string()))?;
-        let dest = Dest::col_buc(&config.collection, &config.bucket);
-        let request = QueryRequest::new(dest, query).limit(limit);
-        channel
-            .query(request)
-            .map_err(|error| SonicIndexError::Transport(error.to_string()))
+        let searcher = self.reader.searcher();
+        let query_parser = QueryParser::for_index(
+            &self.index,
+            vec![
+                self.fields.title,
+                self.fields.bundle_identifier,
+                self.fields.bundle_name,
+            ],
+        );
+        let (parsed_query, _errors) = query_parser.parse_query_lenient(query);
+        let top_docs =
+            searcher.search(&parsed_query, &TopDocs::with_limit(limit).order_by_score())?;
+
+        let mut app_ids = Vec::with_capacity(top_docs.len());
+        for (_score, doc_address) in top_docs {
+            let document = searcher.doc::<TantivyDocument>(doc_address)?;
+            if let Some(app_id) = document
+                .get_first(self.fields.id)
+                .and_then(|value| value.as_str())
+            {
+                app_ids.push(app_id.to_string());
+            }
+        }
+
+        Ok(app_ids)
     }
 
-    pub fn reindex_apps(&self, apps: &[InstalledApp]) -> Result<AppIndexStats, SonicIndexError> {
-        let config = self.config.as_ref().ok_or(SonicIndexError::NotConfigured)?;
-        let channel = IngestChannel::start(config.address(), &config.password)
-            .map_err(|error| SonicIndexError::Transport(error.to_string()))?;
+    pub fn reindex_apps(
+        &self,
+        apps: &[InstalledApp],
+    ) -> Result<AppIndexStats, TantivyAppIndexError> {
+        let mut writer = self.index.writer(INDEX_WRITER_HEAP_BYTES)?;
+        writer.delete_all_documents()?;
 
-        channel
-            .flush(FlushRequest::bucket(&config.collection, &config.bucket))
-            .map_err(|error| SonicIndexError::Transport(error.to_string()))?;
-
-        let dest = Dest::col_buc(&config.collection, &config.bucket);
         let mut indexed_count = 0;
         let mut skipped_count = 0;
-
         for app in apps {
-            let text = app.search_text();
-            if text.is_empty() {
+            let fields = AppDocumentFields::from_app(app);
+            if fields.is_empty() {
                 skipped_count += 1;
                 continue;
             }
 
-            let request = PushRequest::new(dest.clone().obj(app.id.as_str()), text);
-            channel
-                .push(request)
-                .map_err(|error| SonicIndexError::Transport(error.to_string()))?;
+            writer.add_document(doc!(
+                self.fields.id => app.id.as_str(),
+                self.fields.title => fields.title,
+                self.fields.bundle_identifier => fields.bundle_identifier,
+                self.fields.bundle_name => fields.bundle_name,
+            ))?;
             indexed_count += 1;
         }
+
+        writer.commit()?;
+        self.reader.reload()?;
 
         Ok(AppIndexStats {
             discovered_count: apps.len(),
@@ -181,67 +184,184 @@ impl SonicAppIndex {
             skipped_count,
         })
     }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AppDocumentFields {
+    title: String,
+    bundle_identifier: String,
+    bundle_name: String,
+}
+
+impl AppDocumentFields {
+    fn from_app(app: &InstalledApp) -> Self {
+        Self {
+            title: app.title.trim().to_string(),
+            bundle_identifier: app
+                .bundle_identifier
+                .as_deref()
+                .unwrap_or_default()
+                .trim()
+                .to_string(),
+            bundle_name: app_bundle_name(app),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.title.is_empty() && self.bundle_identifier.is_empty() && self.bundle_name.is_empty()
+    }
+}
+
+fn app_bundle_name(app: &InstalledApp) -> String {
+    Path::new(&app.path)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .unwrap_or_default()
+        .to_string()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use rayon_types::CommandId;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
-    #[test]
-    fn from_values_applies_defaults() {
-        let config = SonicConfig::from_values("secret".into(), None, None, None, None).unwrap();
+    fn unique_index_path() -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("rayon-tantivy-test-{nanos}"))
+    }
 
-        assert_eq!(config.host, DEFAULT_SONIC_HOST);
-        assert_eq!(config.port, DEFAULT_SONIC_PORT);
-        assert_eq!(config.collection, DEFAULT_SONIC_COLLECTION);
-        assert_eq!(config.bucket, DEFAULT_SONIC_BUCKET);
+    fn test_index() -> TantivyAppIndex {
+        TantivyAppIndex::open_or_create(unique_index_path()).unwrap()
+    }
+
+    fn installed_app(
+        id: &str,
+        title: &str,
+        bundle_identifier: Option<&str>,
+        path: &str,
+    ) -> InstalledApp {
+        InstalledApp {
+            id: CommandId::from(id),
+            title: title.into(),
+            bundle_identifier: bundle_identifier.map(str::to_string),
+            path: path.into(),
+        }
     }
 
     #[test]
-    fn from_values_respects_overrides() {
-        let config = SonicConfig::from_values(
-            "secret".into(),
-            Some("sonic.local".into()),
-            Some("1499".into()),
-            Some("custom-apps".into()),
-            Some("desktop".into()),
-        )
-        .unwrap();
+    fn search_is_empty_for_blank_query() {
+        let index = test_index();
 
-        assert_eq!(config.host, "sonic.local");
-        assert_eq!(config.port, 1499);
-        assert_eq!(config.collection, "custom-apps");
-        assert_eq!(config.bucket, "desktop");
-    }
-
-    #[test]
-    fn rejects_invalid_port() {
-        let error =
-            SonicConfig::from_values("secret".into(), None, Some("invalid".into()), None, None)
-                .unwrap_err();
-
-        assert_eq!(error, SonicConfigError::InvalidPort("invalid".into()));
-    }
-
-    #[test]
-    fn search_is_empty_when_unconfigured() {
-        let index = SonicAppIndex { config: None };
-
-        let results = index.search_app_ids("arc", 10).unwrap();
+        let results = index.search_app_ids("   ", 10).unwrap();
 
         assert!(results.is_empty());
     }
 
     #[test]
-    fn app_index_stats_reflect_search_text_presence() {
-        let app = InstalledApp {
-            id: CommandId::from("app:macos:com.example.arc"),
-            title: "Arc".into(),
-            bundle_identifier: Some("com.example.arc".into()),
-            path: "/Applications/Arc.app".into(),
-        };
+    fn reindex_and_search_by_title() {
+        let index = test_index();
+        let apps = vec![
+            installed_app(
+                "app:macos:com.example.arc",
+                "Arc",
+                Some("com.example.arc"),
+                "/Applications/Arc.app",
+            ),
+            installed_app(
+                "app:macos:com.example.notes",
+                "Notes",
+                Some("com.apple.Notes"),
+                "/System/Applications/Notes.app",
+            ),
+        ];
 
-        assert_eq!(app.search_text(), "Arc com.example.arc Arc");
+        let stats = index.reindex_apps(&apps).unwrap();
+        let results = index.search_app_ids("arc", 10).unwrap();
+
+        assert_eq!(
+            stats,
+            AppIndexStats {
+                discovered_count: 2,
+                indexed_count: 2,
+                skipped_count: 0,
+            }
+        );
+        assert_eq!(results, vec!["app:macos:com.example.arc"]);
+    }
+
+    #[test]
+    fn search_matches_bundle_identifier() {
+        let index = test_index();
+        let apps = vec![installed_app(
+            "app:macos:com.example.arc",
+            "Browser",
+            Some("com.example.arc"),
+            "/Applications/Arc.app",
+        )];
+
+        index.reindex_apps(&apps).unwrap();
+
+        let results = index.search_app_ids("com.example.arc", 10).unwrap();
+
+        assert_eq!(results, vec!["app:macos:com.example.arc"]);
+    }
+
+    #[test]
+    fn reindex_replaces_stale_documents() {
+        let index = test_index();
+        let old_apps = vec![installed_app(
+            "app:macos:com.example.arc",
+            "Arc",
+            Some("com.example.arc"),
+            "/Applications/Arc.app",
+        )];
+        let new_apps = vec![installed_app(
+            "app:macos:com.example.notes",
+            "Notes",
+            Some("com.apple.Notes"),
+            "/System/Applications/Notes.app",
+        )];
+
+        index.reindex_apps(&old_apps).unwrap();
+        index.reindex_apps(&new_apps).unwrap();
+
+        assert!(index.search_app_ids("arc", 10).unwrap().is_empty());
+        assert_eq!(
+            index.search_app_ids("notes", 10).unwrap(),
+            vec!["app:macos:com.example.notes"]
+        );
+    }
+
+    #[test]
+    fn persists_index_on_disk() {
+        let path = unique_index_path();
+        let index = TantivyAppIndex::open_or_create(&path).unwrap();
+        let apps = vec![installed_app(
+            "app:macos:com.example.arc",
+            "Arc",
+            Some("com.example.arc"),
+            "/Applications/Arc.app",
+        )];
+
+        index.reindex_apps(&apps).unwrap();
+        assert_eq!(index.path(), path.as_path());
+        drop(index);
+
+        let reopened = TantivyAppIndex::open_or_create(&path).unwrap();
+
+        assert_eq!(
+            reopened.search_app_ids("arc", 10).unwrap(),
+            vec!["app:macos:com.example.arc"]
+        );
     }
 }

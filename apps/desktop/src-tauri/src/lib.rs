@@ -5,10 +5,11 @@ use tauri::{
 };
 
 use rayon_core::{CommandRegistry, LauncherService};
-use rayon_db::SonicAppIndex;
+use rayon_db::TantivyAppIndex;
 use rayon_features::built_in_providers;
 use rayon_platform::MacOsAppManager;
 use rayon_types::{CommandExecutionResult, CommandId, SearchResult};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 const MAIN_WINDOW_LABEL: &str = "main";
@@ -19,7 +20,7 @@ struct AppState {
 }
 
 impl AppState {
-    fn new() -> Result<Self, String> {
+    fn new(app: &AppHandle) -> Result<Self, String> {
         let mut registry = CommandRegistry::new();
 
         for provider in built_in_providers() {
@@ -28,13 +29,23 @@ impl AppState {
                 .expect("built-in providers must register without conflicts");
         }
 
-        let app_index = Arc::new(SonicAppIndex::from_env().map_err(|error| error.to_string())?);
+        let app_index = Arc::new(
+            TantivyAppIndex::open_or_create(app_search_index_path(app)?)
+                .map_err(|error| error.to_string())?,
+        );
         let platform = Arc::new(MacOsAppManager);
 
         Ok(Self {
             launcher: LauncherService::new(registry, platform, app_index),
         })
     }
+}
+
+fn app_search_index_path(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_local_data_dir()
+        .map(|path| path.join("search").join("apps"))
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -167,10 +178,7 @@ fn build_tray(app: &mut tauri::App) -> tauri::Result<()> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let app_state = AppState::new().expect("failed to initialize application state");
-
     tauri::Builder::default()
-        .manage(app_state)
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, _shortcut, event| {
@@ -184,6 +192,9 @@ pub fn run() {
         )
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            let app_state =
+                AppState::new(app.handle()).expect("failed to initialize application state");
+            app.manage(app_state);
             set_macos_activation_policy(app);
             build_tray(app)?;
             register_global_shortcut(app.handle())?;

@@ -5,4 +5,4 @@ edition.workspace = true
 
 [dependencies]
 rayon-types = { path = "../types" }
-sonic-channel = { workspace = true, features = ["search", "ingest"] }
+tantivy = { workspace = true }
