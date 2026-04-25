@@ -25,3 +25,26 @@ Current code is an early foundation: built-in providers are wired in statically,
 - `pnpm dev`: run the frontend dev server
 - `pnpm tauri dev`: run the desktop app
 - `cargo test`: run Rust tests across the workspace
+
+## macOS launcher shortcut
+
+On macOS, `rayon` tries to register `Command+Space` as the launcher shortcut. That is the same default shortcut used by Spotlight, so pressing it can open both Spotlight and `rayon`.
+
+### Fix the Spotlight conflict
+
+1. Open `System Settings > Keyboard > Keyboard Shortcuts`.
+2. Open `Spotlight`.
+3. Disable `Show Spotlight search`, or change it to a different shortcut.
+4. Close System Settings and relaunch `rayon`.
+
+If `Command+Space` is still unavailable, `rayon` also tries `Command+Shift+Space` as a fallback.
+
+### Make only `rayon` appear
+
+`rayon` is already configured as an accessory-style macOS app:
+
+- it hides the Dock icon
+- it stays out of the taskbar
+- it opens as the launcher window only
+
+If Spotlight still appears together with `rayon`, the issue is the macOS keyboard shortcut conflict above. Once Spotlight is disabled or remapped, pressing the `rayon` shortcut should only show the `rayon` launcher.
