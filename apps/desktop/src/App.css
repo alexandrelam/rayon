@@ -151,13 +151,39 @@ h1 {
   background: var(--selected-bg);
 }
 
+.result-copy {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.result-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .result-title {
   font-weight: 600;
 }
 
-.result-id {
+.result-kind,
+.result-meta {
   font-size: 0.78rem;
   color: var(--result-id);
+}
+
+.result-kind {
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--result-border);
+  background: rgba(255, 255, 255, 0.4);
+}
+
+.result-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .result-empty {

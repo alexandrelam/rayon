@@ -6,6 +6,9 @@ import "./App.css";
 type SearchResult = {
   id: string;
   title: string;
+  subtitle: string | null;
+  iconPath: string | null;
+  kind: "command" | "application";
 };
 
 type CommandExecutionResult = {
@@ -182,19 +185,24 @@ function App() {
           autoCorrect="off"
         />
 
-        <ul className="results" aria-label="Commands">
+        <ul className="results" aria-label="Search results">
           {results.map((result, index) => (
             <li
               key={result.id}
               className={index === selectedIndex ? "result is-selected" : "result"}
               aria-selected={index === selectedIndex}
             >
-              <span className="result-title">{result.title}</span>
-              <span className="result-id">{result.id}</span>
+              <span className="result-copy">
+                <span className="result-row">
+                  <span className="result-title">{result.title}</span>
+                  <span className="result-kind">{result.kind === "application" ? "App" : "Command"}</span>
+                </span>
+                <span className="result-meta">{result.subtitle ?? result.id}</span>
+              </span>
             </li>
           ))}
           {results.length === 0 ? (
-            <li className="result result-empty">No commands found.</li>
+            <li className="result result-empty">No matches found.</li>
           ) : null}
         </ul>
 

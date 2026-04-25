@@ -2,7 +2,9 @@
 members = [
   "apps/desktop/src-tauri",
   "crates/core",
+  "crates/db",
   "crates/features",
+  "crates/platform",
   "crates/types",
 ]
 resolver = "2"
@@ -13,8 +15,10 @@ version = "0.1.0"
 license = "MIT"
 
 [workspace.dependencies]
+plist = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sonic-channel = { version = "1.1.0", default-features = false }
 tauri = { version = "2", features = ["macos-private-api", "tray-icon"] }
 tauri-build = { version = "2", features = [] }
 tauri-plugin-global-shortcut = "2"

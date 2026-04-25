@@ -14,7 +14,9 @@ tauri-build.workspace = true
 
 [dependencies]
 rayon-core = { path = "../../../crates/core" }
+rayon-db = { path = "../../../crates/db" }
 rayon-features = { path = "../../../crates/features" }
+rayon-platform = { path = "../../../crates/platform" }
 rayon-types = { path = "../../../crates/types" }
 serde.workspace = true
 serde_json.workspace = true

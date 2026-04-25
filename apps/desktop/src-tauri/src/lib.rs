@@ -4,19 +4,22 @@ use tauri::{
     AppHandle, Emitter, Manager, WindowEvent,
 };
 
-use rayon_core::CommandRegistry;
+use rayon_core::{CommandRegistry, LauncherService};
+use rayon_db::SonicAppIndex;
 use rayon_features::built_in_providers;
+use rayon_platform::MacOsAppManager;
 use rayon_types::{CommandExecutionResult, CommandId, SearchResult};
+use std::sync::Arc;
 
 const MAIN_WINDOW_LABEL: &str = "main";
 const LAUNCHER_OPENED_EVENT: &str = "launcher:opened";
 
 struct AppState {
-    registry: CommandRegistry,
+    launcher: LauncherService,
 }
 
 impl AppState {
-    fn new() -> Self {
+    fn new() -> Result<Self, String> {
         let mut registry = CommandRegistry::new();
 
         for provider in built_in_providers() {
@@ -25,13 +28,18 @@ impl AppState {
                 .expect("built-in providers must register without conflicts");
         }
 
-        Self { registry }
+        let app_index = Arc::new(SonicAppIndex::from_env().map_err(|error| error.to_string())?);
+        let platform = Arc::new(MacOsAppManager);
+
+        Ok(Self {
+            launcher: LauncherService::new(registry, platform, app_index),
+        })
     }
 }
 
 #[tauri::command]
 fn search(query: String, state: tauri::State<'_, AppState>) -> Vec<SearchResult> {
-    state.registry.search(&query)
+    state.launcher.search(&query)
 }
 
 #[tauri::command]
@@ -41,7 +49,7 @@ fn execute_command(
     state: tauri::State<'_, AppState>,
 ) -> Result<CommandExecutionResult, String> {
     state
-        .registry
+        .launcher
         .execute(&CommandId::from(command_id), payload)
         .map_err(|error| error.to_string())
 }
@@ -159,8 +167,10 @@ fn build_tray(app: &mut tauri::App) -> tauri::Result<()> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let app_state = AppState::new().expect("failed to initialize application state");
+
     tauri::Builder::default()
-        .manage(AppState::new())
+        .manage(app_state)
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, _shortcut, event| {

@@ -1,9 +1,8 @@
 [package]
-name = "rayon-core"
+name = "rayon-platform"
 version.workspace = true
 edition.workspace = true
 
 [dependencies]
-rayon-db = { path = "../db" }
-rayon-platform = { path = "../platform" }
+plist.workspace = true
 rayon-types = { path = "../types" }

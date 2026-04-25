@@ -43,9 +43,51 @@ pub struct CommandDefinition {
 pub struct SearchResult {
     pub id: CommandId,
     pub title: String,
+    pub subtitle: Option<String>,
+    pub icon_path: Option<String>,
+    pub kind: SearchResultKind,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommandExecutionResult {
     pub output: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SearchResultKind {
+    Command,
+    Application,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstalledApp {
+    pub id: CommandId,
+    pub title: String,
+    pub bundle_identifier: Option<String>,
+    pub path: String,
+}
+
+impl InstalledApp {
+    pub fn subtitle(&self) -> String {
+        self.bundle_identifier
+            .clone()
+            .unwrap_or_else(|| self.path.clone())
+    }
+
+    pub fn search_text(&self) -> String {
+        let mut parts = vec![self.title.clone()];
+        if let Some(bundle_identifier) = &self.bundle_identifier {
+            parts.push(bundle_identifier.clone());
+        }
+        if let Some(bundle_name) = std::path::Path::new(&self.path)
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .filter(|name| !name.is_empty())
+        {
+            parts.push(bundle_name.to_string());
+        }
+
+        parts.join(" ")
+    }
 }

@@ -1,8 +1,16 @@
-use rayon_types::{CommandDefinition, CommandExecutionResult, CommandId, SearchResult};
+use rayon_db::{AppIndexStats, SonicAppIndex};
+use rayon_platform::MacOsAppManager;
+use rayon_types::{
+    CommandDefinition, CommandExecutionResult, CommandId, InstalledApp, SearchResult,
+    SearchResultKind,
+};
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
+
+pub const APP_REINDEX_COMMAND_ID: &str = "apps.reindex";
+const APP_SEARCH_LIMIT: usize = 20;
 
 pub trait CommandProvider: Send + Sync {
     fn commands(&self) -> Vec<CommandDefinition>;
@@ -31,6 +39,33 @@ impl fmt::Display for CommandError {
 }
 
 impl Error for CommandError {}
+
+#[derive(Debug)]
+pub enum LauncherError {
+    Command(CommandError),
+    AppNotFound(CommandId),
+    Platform(String),
+    SearchBackend(String),
+}
+
+impl fmt::Display for LauncherError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Command(error) => write!(f, "{error}"),
+            Self::AppNotFound(command_id) => write!(f, "unknown application id: {command_id}"),
+            Self::Platform(error) => write!(f, "{error}"),
+            Self::SearchBackend(error) => write!(f, "{error}"),
+        }
+    }
+}
+
+impl Error for LauncherError {}
+
+impl From<CommandError> for LauncherError {
+    fn from(value: CommandError) -> Self {
+        Self::Command(value)
+    }
+}
 
 pub struct CommandRegistry {
     providers: Vec<Arc<dyn CommandProvider>>,
@@ -96,6 +131,9 @@ impl CommandRegistry {
             .map(|command| SearchResult {
                 id: command.definition.id.clone(),
                 title: command.definition.title.clone(),
+                subtitle: None,
+                icon_path: None,
+                kind: SearchResultKind::Command,
             })
             .collect()
     }
@@ -115,9 +153,184 @@ impl CommandRegistry {
     }
 }
 
+pub trait AppPlatform: Send + Sync {
+    fn discover_apps(&self) -> Result<Vec<InstalledApp>, String>;
+    fn launch_app(&self, app: &InstalledApp) -> Result<(), String>;
+}
+
+pub trait AppIndex: Send + Sync {
+    fn is_configured(&self) -> bool;
+    fn search_app_ids(&self, query: &str, limit: usize) -> Result<Vec<String>, String>;
+    fn reindex_apps(&self, apps: &[InstalledApp]) -> Result<AppIndexStats, String>;
+}
+
+impl AppPlatform for MacOsAppManager {
+    fn discover_apps(&self) -> Result<Vec<InstalledApp>, String> {
+        MacOsAppManager::discover_apps(self)
+    }
+
+    fn launch_app(&self, app: &InstalledApp) -> Result<(), String> {
+        MacOsAppManager::launch_app(self, app)
+    }
+}
+
+impl AppIndex for SonicAppIndex {
+    fn is_configured(&self) -> bool {
+        SonicAppIndex::is_configured(self)
+    }
+
+    fn search_app_ids(&self, query: &str, limit: usize) -> Result<Vec<String>, String> {
+        SonicAppIndex::search_app_ids(self, query, limit).map_err(|error| error.to_string())
+    }
+
+    fn reindex_apps(&self, apps: &[InstalledApp]) -> Result<AppIndexStats, String> {
+        SonicAppIndex::reindex_apps(self, apps).map_err(|error| error.to_string())
+    }
+}
+
+#[derive(Default)]
+struct AppCatalog {
+    by_id: HashMap<String, InstalledApp>,
+}
+
+impl AppCatalog {
+    fn from_apps(apps: Vec<InstalledApp>) -> Self {
+        let mut by_id = HashMap::new();
+        for app in apps {
+            by_id.insert(app.id.to_string(), app);
+        }
+
+        Self { by_id }
+    }
+
+    fn get(&self, app_id: &CommandId) -> Option<&InstalledApp> {
+        self.by_id.get(app_id.as_str())
+    }
+}
+
+pub struct LauncherService {
+    registry: CommandRegistry,
+    platform: Arc<dyn AppPlatform>,
+    app_index: Arc<dyn AppIndex>,
+    app_catalog: RwLock<AppCatalog>,
+}
+
+impl LauncherService {
+    pub fn new(
+        registry: CommandRegistry,
+        platform: Arc<dyn AppPlatform>,
+        app_index: Arc<dyn AppIndex>,
+    ) -> Self {
+        let app_catalog = match platform.discover_apps() {
+            Ok(apps) => AppCatalog::from_apps(apps),
+            Err(error) => {
+                eprintln!("failed to discover apps on startup: {error}");
+                AppCatalog::default()
+            }
+        };
+
+        Self {
+            registry,
+            platform,
+            app_index,
+            app_catalog: RwLock::new(app_catalog),
+        }
+    }
+
+    pub fn search(&self, query: &str) -> Vec<SearchResult> {
+        let mut results = self.registry.search(query);
+        let app_ids = match self.app_index.search_app_ids(query, APP_SEARCH_LIMIT) {
+            Ok(app_ids) => app_ids,
+            Err(error) => {
+                eprintln!("app search failed: {error}");
+                Vec::new()
+            }
+        };
+
+        let app_catalog = self.app_catalog.read().expect("app catalog lock poisoned");
+        for app_id in app_ids {
+            if let Some(app) = app_catalog.by_id.get(&app_id) {
+                results.push(SearchResult {
+                    id: app.id.clone(),
+                    title: app.title.clone(),
+                    subtitle: Some(app.subtitle()),
+                    icon_path: None,
+                    kind: SearchResultKind::Application,
+                });
+            }
+        }
+
+        results
+    }
+
+    pub fn execute(
+        &self,
+        command_id: &CommandId,
+        payload: Option<String>,
+    ) -> Result<CommandExecutionResult, LauncherError> {
+        if command_id.as_str() == APP_REINDEX_COMMAND_ID {
+            return self.refresh_and_reindex();
+        }
+
+        if command_id.as_str().starts_with("app:macos:") {
+            return self.launch_app(command_id);
+        }
+
+        self.registry
+            .execute(command_id, payload)
+            .map_err(LauncherError::from)
+    }
+
+    pub fn app_search_enabled(&self) -> bool {
+        self.app_index.is_configured()
+    }
+
+    fn refresh_and_reindex(&self) -> Result<CommandExecutionResult, LauncherError> {
+        let apps = self
+            .platform
+            .discover_apps()
+            .map_err(LauncherError::Platform)?;
+        {
+            let mut app_catalog = self.app_catalog.write().expect("app catalog lock poisoned");
+            *app_catalog = AppCatalog::from_apps(apps.clone());
+        }
+
+        let stats = self
+            .app_index
+            .reindex_apps(&apps)
+            .map_err(LauncherError::SearchBackend)?;
+
+        Ok(CommandExecutionResult {
+            output: format!(
+                "reindexed {} apps into Sonic ({} skipped)",
+                stats.indexed_count, stats.skipped_count
+            ),
+        })
+    }
+
+    fn launch_app(&self, command_id: &CommandId) -> Result<CommandExecutionResult, LauncherError> {
+        let app = {
+            let app_catalog = self.app_catalog.read().expect("app catalog lock poisoned");
+            app_catalog
+                .get(command_id)
+                .cloned()
+                .ok_or_else(|| LauncherError::AppNotFound(command_id.clone()))?
+        };
+
+        self.platform
+            .launch_app(&app)
+            .map_err(LauncherError::Platform)?;
+
+        Ok(CommandExecutionResult {
+            output: format!("opened {}", app.title),
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
 
     struct TestProvider;
 
@@ -154,6 +367,9 @@ mod tests {
         let results = registry.search("");
 
         assert_eq!(results.len(), 2);
+        assert!(results
+            .iter()
+            .all(|result| result.kind == SearchResultKind::Command));
     }
 
     #[test]
@@ -203,5 +419,103 @@ mod tests {
             error,
             CommandError::UnknownCommand(CommandId::from("missing"))
         );
+    }
+
+    struct StubPlatform {
+        apps: Vec<InstalledApp>,
+        launched: Mutex<Vec<String>>,
+    }
+
+    impl AppPlatform for StubPlatform {
+        fn discover_apps(&self) -> Result<Vec<InstalledApp>, String> {
+            Ok(self.apps.clone())
+        }
+
+        fn launch_app(&self, app: &InstalledApp) -> Result<(), String> {
+            self.launched.lock().unwrap().push(app.id.to_string());
+            Ok(())
+        }
+    }
+
+    struct StubIndex {
+        configured: bool,
+        search_results: Vec<String>,
+        stats: AppIndexStats,
+    }
+
+    impl AppIndex for StubIndex {
+        fn is_configured(&self) -> bool {
+            self.configured
+        }
+
+        fn search_app_ids(&self, _query: &str, _limit: usize) -> Result<Vec<String>, String> {
+            Ok(self.search_results.clone())
+        }
+
+        fn reindex_apps(&self, apps: &[InstalledApp]) -> Result<AppIndexStats, String> {
+            Ok(AppIndexStats {
+                discovered_count: apps.len(),
+                ..self.stats.clone()
+            })
+        }
+    }
+
+    fn build_launcher_service(search_results: Vec<String>) -> LauncherService {
+        let mut registry = CommandRegistry::new();
+        registry.register_provider(Arc::new(TestProvider)).unwrap();
+
+        let platform = Arc::new(StubPlatform {
+            apps: vec![InstalledApp {
+                id: CommandId::from("app:macos:com.example.arc"),
+                title: "Arc".into(),
+                bundle_identifier: Some("com.example.arc".into()),
+                path: "/Applications/Arc.app".into(),
+            }],
+            launched: Mutex::new(Vec::new()),
+        });
+        let index = Arc::new(StubIndex {
+            configured: true,
+            search_results,
+            stats: AppIndexStats {
+                discovered_count: 0,
+                indexed_count: 1,
+                skipped_count: 0,
+            },
+        });
+
+        LauncherService::new(registry, platform, index)
+    }
+
+    #[test]
+    fn aggregate_search_merges_command_and_app_results() {
+        let launcher = build_launcher_service(vec!["app:macos:com.example.arc".into()]);
+
+        let results = launcher.search("arc");
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].kind, SearchResultKind::Application);
+        assert_eq!(results[0].subtitle.as_deref(), Some("com.example.arc"));
+    }
+
+    #[test]
+    fn execute_routes_app_ids_to_platform_launcher() {
+        let launcher = build_launcher_service(vec![]);
+
+        let result = launcher
+            .execute(&CommandId::from("app:macos:com.example.arc"), None)
+            .unwrap();
+
+        assert_eq!(result.output, "opened Arc");
+    }
+
+    #[test]
+    fn execute_reindexes_apps() {
+        let launcher = build_launcher_service(vec![]);
+
+        let result = launcher
+            .execute(&CommandId::from(APP_REINDEX_COMMAND_ID), None)
+            .unwrap();
+
+        assert_eq!(result.output, "reindexed 1 apps into Sonic (0 skipped)");
     }
 }
