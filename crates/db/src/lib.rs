@@ -1,4 +1,5 @@
 use rayon_types::InstalledApp;
+use std::collections::BTreeSet;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -200,14 +201,11 @@ struct AppDocumentFields {
 impl AppDocumentFields {
     fn from_app(app: &InstalledApp) -> Self {
         Self {
-            title: app.title.trim().to_string(),
-            bundle_identifier: app
-                .bundle_identifier
-                .as_deref()
-                .unwrap_or_default()
-                .trim()
-                .to_string(),
-            bundle_name: app_bundle_name(app),
+            title: prefix_search_terms(&app.title),
+            bundle_identifier: prefix_search_terms(
+                app.bundle_identifier.as_deref().unwrap_or_default(),
+            ),
+            bundle_name: prefix_search_terms(&app_bundle_name(app)),
         }
     }
 
@@ -226,18 +224,43 @@ fn app_bundle_name(app: &InstalledApp) -> String {
         .to_string()
 }
 
+fn prefix_search_terms(text: &str) -> String {
+    let mut prefixes = BTreeSet::new();
+
+    for token in text
+        .split(|character: char| !character.is_alphanumeric())
+        .filter(|token| !token.is_empty())
+    {
+        let lowercase = token.to_lowercase();
+        let char_count = lowercase.chars().count();
+        if char_count < 2 {
+            continue;
+        }
+
+        for prefix_len in 2..=char_count {
+            prefixes.insert(lowercase.chars().take(prefix_len).collect::<String>());
+        }
+    }
+
+    prefixes.into_iter().collect::<Vec<_>>().join(" ")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use rayon_types::CommandId;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    static NEXT_TEST_INDEX_ID: AtomicU64 = AtomicU64::new(0);
 
     fn unique_index_path() -> PathBuf {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        std::env::temp_dir().join(format!("rayon-tantivy-test-{nanos}"))
+        let unique_id = NEXT_TEST_INDEX_ID.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!("rayon-tantivy-test-{nanos}-{unique_id}"))
     }
 
     fn test_index() -> TantivyAppIndex {
@@ -268,7 +291,7 @@ mod tests {
     }
 
     #[test]
-    fn reindex_and_search_by_title() {
+    fn search_matches_two_character_title_prefix() {
         let index = test_index();
         let apps = vec![
             installed_app(
@@ -286,7 +309,7 @@ mod tests {
         ];
 
         let stats = index.reindex_apps(&apps).unwrap();
-        let results = index.search_app_ids("arc", 10).unwrap();
+        let results = index.search_app_ids("ar", 10).unwrap();
 
         assert_eq!(
             stats,
@@ -300,7 +323,24 @@ mod tests {
     }
 
     #[test]
-    fn search_matches_bundle_identifier() {
+    fn search_matches_three_character_title_prefix() {
+        let index = test_index();
+        let apps = vec![installed_app(
+            "app:macos:com.example.safari",
+            "Safari",
+            Some("com.apple.Safari"),
+            "/Applications/Safari.app",
+        )];
+
+        index.reindex_apps(&apps).unwrap();
+
+        let results = index.search_app_ids("saf", 10).unwrap();
+
+        assert_eq!(results, vec!["app:macos:com.example.safari"]);
+    }
+
+    #[test]
+    fn search_matches_bundle_identifier_prefix() {
         let index = test_index();
         let apps = vec![installed_app(
             "app:macos:com.example.arc",
@@ -311,9 +351,24 @@ mod tests {
 
         index.reindex_apps(&apps).unwrap();
 
-        let results = index.search_app_ids("com.example.arc", 10).unwrap();
+        let results = index.search_app_ids("exa", 10).unwrap();
 
         assert_eq!(results, vec!["app:macos:com.example.arc"]);
+    }
+
+    #[test]
+    fn search_does_not_match_non_prefix_substrings() {
+        let index = test_index();
+        let apps = vec![installed_app(
+            "app:macos:com.example.safari",
+            "Safari",
+            Some("com.apple.Safari"),
+            "/Applications/Safari.app",
+        )];
+
+        index.reindex_apps(&apps).unwrap();
+
+        assert!(index.search_app_ids("far", 10).unwrap().is_empty());
     }
 
     #[test]
@@ -335,9 +390,9 @@ mod tests {
         index.reindex_apps(&old_apps).unwrap();
         index.reindex_apps(&new_apps).unwrap();
 
-        assert!(index.search_app_ids("arc", 10).unwrap().is_empty());
+        assert!(index.search_app_ids("ar", 10).unwrap().is_empty());
         assert_eq!(
-            index.search_app_ids("notes", 10).unwrap(),
+            index.search_app_ids("no", 10).unwrap(),
             vec!["app:macos:com.example.notes"]
         );
     }
@@ -360,8 +415,21 @@ mod tests {
         let reopened = TantivyAppIndex::open_or_create(&path).unwrap();
 
         assert_eq!(
-            reopened.search_app_ids("arc", 10).unwrap(),
+            reopened.search_app_ids("ar", 10).unwrap(),
             vec!["app:macos:com.example.arc"]
+        );
+    }
+
+    #[test]
+    fn prefix_search_terms_indexes_word_prefixes() {
+        assert_eq!(prefix_search_terms("Safari"), "sa saf safa safar safari");
+        assert_eq!(
+            prefix_search_terms("Google Chrome"),
+            "ch chr chro chrom chrome go goo goog googl google"
+        );
+        assert_eq!(
+            prefix_search_terms("com.apple.Notes"),
+            "ap app appl apple co com no not note notes"
         );
     }
 }
