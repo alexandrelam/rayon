@@ -12,6 +12,7 @@ import {
   type SearchResult,
 } from "./commandExecution";
 import "./App.css";
+import { getLauncherViewState, shouldRunSearch } from "./launcherViewState";
 
 function App() {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -56,7 +57,7 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (pendingExecution) {
+    if (!shouldRunSearch({ query, pendingExecution })) {
       return;
     }
 
@@ -124,6 +125,11 @@ function App() {
     if (!pendingExecution && nextQuery !== "") {
       setExecutionResult("");
     }
+
+    if (!pendingExecution && nextQuery === "") {
+      setResults([]);
+      setSelectedIndex(0);
+    }
   }
 
   async function executeResult(result: SearchResult) {
@@ -133,6 +139,7 @@ function App() {
       setQuery("");
       setExecutionResult("");
       setError("");
+      setResults([]);
       return;
     }
 
@@ -183,6 +190,7 @@ function App() {
       setPendingExecution(step.pendingExecution);
       setQuery("");
       setError("");
+      setResults([]);
       return;
     }
 
@@ -202,6 +210,7 @@ function App() {
             setPendingExecution(null);
             setQuery("");
             setError("");
+            setResults([]);
             return;
           }
 
@@ -259,20 +268,29 @@ function App() {
   }
 
   const activeArgument = currentArgument(pendingExecution);
+  const viewState = getLauncherViewState({
+    query,
+    results,
+    executionResult,
+    error,
+    pendingExecution,
+  });
 
   return (
     <main className="launcher-shell">
       <section className="palette" aria-label="Command palette">
-        <header className="palette-header">
-          <p className="eyebrow">rayon</p>
-          <h1>{pendingExecution ? pendingExecution.commandTitle : "Command Palette"}</h1>
-          {pendingExecution && activeArgument ? (
-            <p className="arg-prompt">
-              {activeArgument.label}
-              {activeArgument.required ? " · required" : " · optional"}
-            </p>
-          ) : null}
-        </header>
+        {viewState.showHeader ? (
+          <header className="palette-header">
+            <p className="eyebrow">rayon</p>
+            <h1>{pendingExecution ? pendingExecution.commandTitle : "Command Palette"}</h1>
+            {pendingExecution && activeArgument ? (
+              <p className="arg-prompt">
+                {activeArgument.label}
+                {activeArgument.required ? " · required" : " · optional"}
+              </p>
+            ) : null}
+          </header>
+        ) : null}
 
         <input
           ref={inputRef}
@@ -306,7 +324,7 @@ function App() {
               <p className="muted">Default: {currentArgumentInputValue(pendingExecution, query)}</p>
             ) : null}
           </section>
-        ) : (
+        ) : viewState.showResults ? (
           <ul className="results" aria-label="Search results">
             {results.map((result, index) => (
               <li key={result.id}>
@@ -339,22 +357,22 @@ function App() {
                 </button>
               </li>
             ))}
-            {results.length === 0 ? (
+            {viewState.showEmptyResults ? (
               <li className="result result-empty">No matches found.</li>
             ) : null}
           </ul>
-        )}
+        ) : null}
 
-        <section className="output" aria-live="polite">
-          {executionResult ? (
-            <p>{executionResult}</p>
-          ) : (
-            <p className="muted">
-              {pendingExecution ? "Press Enter to continue." : "Press Enter to execute."}
-            </p>
-          )}
-          {error ? <p className="error">{error}</p> : null}
-        </section>
+        {viewState.showFooter ? (
+          <section className="output" aria-live="polite">
+            {executionResult ? (
+              <p>{executionResult}</p>
+            ) : pendingExecution ? (
+              <p className="muted">Press Enter to continue.</p>
+            ) : null}
+            {error ? <p className="error">{error}</p> : null}
+          </section>
+        ) : null}
       </section>
     </main>
   );
