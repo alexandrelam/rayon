@@ -11,7 +11,9 @@ use rayon_db::TantivySearchIndex;
 use rayon_features::built_in_providers;
 use rayon_platform::MacOsAppManager;
 use rayon_types::{
-    BookmarkDefinition, CommandExecutionRequest, CommandExecutionResult, SearchResult,
+    BookmarkDefinition, CommandExecutionRequest, CommandExecutionResult, CommandInvocationResult,
+    InteractiveSessionQueryRequest, InteractiveSessionState, InteractiveSessionSubmitRequest,
+    SearchResult,
 };
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
@@ -54,7 +56,7 @@ fn build_launcher(
     platform: Arc<dyn AppPlatform>,
     search_index: Arc<dyn SearchIndex>,
 ) -> Result<LauncherService, String> {
-    let (registry, bookmarks) = load_registry_and_bookmarks()?;
+    let (registry, bookmarks) = load_registry_and_bookmarks(platform.clone())?;
     Ok(LauncherService::new(
         registry,
         bookmarks,
@@ -70,20 +72,25 @@ fn reload_launcher(
 ) -> Result<CommandExecutionResult, String> {
     let launcher = build_launcher(platform, search_index)?;
     let result = launcher
-        .execute(&CommandExecutionRequest {
+        .execute_command(&CommandExecutionRequest {
             command_id: APP_REINDEX_COMMAND_ID.into(),
             arguments: Default::default(),
         })
         .map_err(|error| error.to_string())?;
+    let CommandInvocationResult::Completed { output } = result else {
+        return Err("reindex unexpectedly started an interactive session".into());
+    };
     *write_launcher(launcher_slot) = launcher;
-    Ok(result)
+    Ok(CommandExecutionResult { output })
 }
 
-fn load_registry_and_bookmarks() -> Result<(CommandRegistry, Vec<BookmarkDefinition>), String> {
+fn load_registry_and_bookmarks(
+    platform: Arc<dyn AppPlatform>,
+) -> Result<(CommandRegistry, Vec<BookmarkDefinition>), String> {
     let mut registry = CommandRegistry::new();
     let loaded_config = load_config().map_err(|error| error.to_string())?;
 
-    for provider in built_in_providers() {
+    for provider in built_in_providers(platform.clone()) {
         registry
             .register_provider(provider)
             .map_err(|error| format!("failed to register built-in provider: {error}"))?;
@@ -152,13 +159,37 @@ fn search(query: String, state: tauri::State<'_, AppState>) -> Vec<SearchResult>
 fn execute_command(
     request: CommandExecutionRequest,
     state: tauri::State<'_, AppState>,
-) -> Result<CommandExecutionResult, String> {
+) -> Result<CommandInvocationResult, String> {
     if request.command_id.as_str() == APP_REINDEX_COMMAND_ID {
-        return state.reload();
+        return state
+            .reload()
+            .map(|result| CommandInvocationResult::Completed {
+                output: result.output,
+            });
     }
 
     read_launcher(&state.launcher)
-        .execute(&request)
+        .execute_command(&request)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn search_interactive_session(
+    request: InteractiveSessionQueryRequest,
+    state: tauri::State<'_, AppState>,
+) -> Result<InteractiveSessionState, String> {
+    read_launcher(&state.launcher)
+        .search_interactive_session(&request)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn submit_interactive_session(
+    request: InteractiveSessionSubmitRequest,
+    state: tauri::State<'_, AppState>,
+) -> Result<InteractiveSessionState, String> {
+    read_launcher(&state.launcher)
+        .submit_interactive_session(&request)
         .map_err(|error| error.to_string())
 }
 
@@ -305,6 +336,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             search,
             execute_command,
+            search_interactive_session,
+            submit_interactive_session,
             hide_launcher
         ])
         .run(tauri::generate_context!());
@@ -319,7 +352,7 @@ pub fn run() {
 mod tests {
     use super::*;
     use rayon_db::SearchIndexStats;
-    use rayon_types::{CommandId, InstalledApp, SearchableItemDocument};
+    use rayon_types::{CommandId, InstalledApp, ProcessMatch, SearchableItemDocument};
     use std::fs;
     use std::path::Path;
     use std::sync::{Mutex, OnceLock};
@@ -342,6 +375,14 @@ mod tests {
         }
 
         fn open_url(&self, _url: &str) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn search_processes(&self, _query: &str) -> Result<Vec<ProcessMatch>, String> {
+            Ok(Vec::new())
+        }
+
+        fn terminate_process(&self, _pid: u32) -> Result<(), String> {
             Ok(())
         }
     }

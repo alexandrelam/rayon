@@ -1,5 +1,5 @@
 use plist::Value;
-use rayon_types::{CommandId, InstalledApp};
+use rayon_types::{CommandId, InstalledApp, ProcessMatch};
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::env;
@@ -66,6 +66,34 @@ impl MacOsAppManager {
         }
     }
 
+    pub fn search_processes(&self, query: &str) -> Result<Vec<ProcessMatch>, String> {
+        let trimmed_query = query.trim();
+        if trimmed_query.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        if let Some(port) = parse_port_query(trimmed_query) {
+            return self.search_processes_by_port(port);
+        }
+
+        let processes = self.list_processes()?;
+        Ok(filter_processes_by_name(&processes, trimmed_query))
+    }
+
+    pub fn terminate_process(&self, pid: u32) -> Result<(), String> {
+        let status = Command::new("/bin/kill")
+            .arg("-TERM")
+            .arg(pid.to_string())
+            .status()
+            .map_err(|error| format!("failed to terminate pid {pid}: {error}"))?;
+
+        if status.success() {
+            Ok(())
+        } else {
+            Err(format!("failed to terminate pid {pid}"))
+        }
+    }
+
     fn spotlight_candidates(&self) -> Result<Vec<PathBuf>, String> {
         let output = Command::new("mdfind")
             .arg(r#"kMDItemContentType == "com.apple.application-bundle""#)
@@ -88,6 +116,35 @@ impl MacOsAppManager {
         }
 
         candidates
+    }
+
+    fn list_processes(&self) -> Result<Vec<ProcessMatch>, String> {
+        let output = Command::new("ps")
+            .args(["-axo", "pid=,comm=,args="])
+            .output()
+            .map_err(|error| format!("failed to run ps: {error}"))?;
+
+        if !output.status.success() {
+            return Err(String::from("ps returned a non-zero exit status"));
+        }
+
+        Ok(parse_ps_output(&String::from_utf8_lossy(&output.stdout)))
+    }
+
+    fn search_processes_by_port(&self, port: u16) -> Result<Vec<ProcessMatch>, String> {
+        let output = Command::new("lsof")
+            .args(["-nP", "-i", &format!(":{port}"), "-F", "pcn"])
+            .output()
+            .map_err(|error| format!("failed to run lsof: {error}"))?;
+
+        if !output.status.success() && !output.stdout.is_empty() {
+            return Err(String::from("lsof returned a non-zero exit status"));
+        }
+
+        Ok(parse_lsof_output(
+            &String::from_utf8_lossy(&output.stdout),
+            port,
+        ))
     }
 }
 
@@ -213,6 +270,214 @@ fn parse_app_bundle(path: &Path) -> Option<InstalledApp> {
     })
 }
 
+fn parse_port_query(query: &str) -> Option<u16> {
+    let normalized = query.trim().to_lowercase();
+    let candidate = normalized
+        .strip_prefix("port ")
+        .unwrap_or(normalized.as_str())
+        .trim();
+
+    if candidate.is_empty()
+        || !candidate
+            .chars()
+            .all(|character| character.is_ascii_digit())
+    {
+        return None;
+    }
+
+    candidate.parse().ok()
+}
+
+fn parse_ps_output(output: &str) -> Vec<ProcessMatch> {
+    let mut processes = Vec::new();
+
+    for line in output.lines() {
+        let trimmed_line = line.trim();
+        if trimmed_line.is_empty() {
+            continue;
+        }
+
+        let mut columns = trimmed_line.split_whitespace();
+        let Some(pid_column) = columns.next() else {
+            continue;
+        };
+        let Some(command_path) = columns.next() else {
+            continue;
+        };
+        let pid = match pid_column.parse::<u32>() {
+            Ok(pid) => pid,
+            Err(_) => continue,
+        };
+
+        let command = if let Some(index) = trimmed_line.find(command_path) {
+            trimmed_line[index..].to_string()
+        } else {
+            command_path.to_string()
+        };
+
+        processes.push(ProcessMatch {
+            pid,
+            display_name: display_name_from_command(command_path),
+            executable_name: executable_name_from_command(command_path),
+            command,
+            matched_ports: Vec::new(),
+        });
+    }
+
+    processes
+}
+
+fn filter_processes_by_name(processes: &[ProcessMatch], query: &str) -> Vec<ProcessMatch> {
+    let normalized_query = query.to_lowercase();
+    let mut matches = Vec::new();
+
+    for process in processes {
+        let haystacks = [
+            process.display_name.to_lowercase(),
+            process.executable_name.to_lowercase(),
+            process.command.to_lowercase(),
+        ];
+        if haystacks
+            .iter()
+            .any(|haystack| haystack.contains(&normalized_query))
+        {
+            matches.push(process.clone());
+        }
+    }
+
+    matches.sort_by(|left, right| compare_process_matches(left, right, &normalized_query));
+    matches
+}
+
+fn compare_process_matches(left: &ProcessMatch, right: &ProcessMatch, query: &str) -> Ordering {
+    let left_prefix = left.display_name.to_lowercase().starts_with(query);
+    let right_prefix = right.display_name.to_lowercase().starts_with(query);
+
+    left_prefix
+        .cmp(&right_prefix)
+        .reverse()
+        .then_with(|| {
+            left.display_name
+                .to_lowercase()
+                .cmp(&right.display_name.to_lowercase())
+        })
+        .then_with(|| left.pid.cmp(&right.pid))
+}
+
+fn parse_lsof_output(output: &str, port: u16) -> Vec<ProcessMatch> {
+    let mut processes = Vec::new();
+    let mut current_pid: Option<u32> = None;
+    let mut current_command: Option<String> = None;
+    let mut current_ports: Vec<u16> = Vec::new();
+
+    for line in output.lines() {
+        if line.is_empty() {
+            continue;
+        }
+
+        let (prefix, value) = line.split_at(1);
+        match prefix {
+            "p" => {
+                if let Some(process) = build_lsof_process(
+                    current_pid,
+                    current_command.take(),
+                    std::mem::take(&mut current_ports),
+                ) {
+                    processes.push(process);
+                }
+                current_pid = value.parse().ok();
+            }
+            "c" => {
+                current_command = Some(value.to_string());
+            }
+            "n" => {
+                if let Some(parsed_port) = parse_port_from_lsof_name(value) {
+                    current_ports.push(parsed_port);
+                } else {
+                    current_ports.push(port);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if let Some(process) = build_lsof_process(current_pid, current_command, current_ports) {
+        processes.push(process);
+    }
+
+    dedupe_port_matches(processes)
+}
+
+fn build_lsof_process(
+    pid: Option<u32>,
+    command: Option<String>,
+    mut ports: Vec<u16>,
+) -> Option<ProcessMatch> {
+    let pid = pid?;
+    let command = command?;
+    ports.sort_unstable();
+    ports.dedup();
+    Some(ProcessMatch {
+        pid,
+        display_name: display_name_from_command(&command),
+        executable_name: executable_name_from_command(&command),
+        command: command.clone(),
+        matched_ports: ports,
+    })
+}
+
+fn dedupe_port_matches(processes: Vec<ProcessMatch>) -> Vec<ProcessMatch> {
+    let mut by_pid: HashMap<u32, ProcessMatch> = HashMap::new();
+
+    for process in processes {
+        by_pid
+            .entry(process.pid)
+            .and_modify(|existing| {
+                existing
+                    .matched_ports
+                    .extend(process.matched_ports.iter().copied());
+                existing.matched_ports.sort_unstable();
+                existing.matched_ports.dedup();
+            })
+            .or_insert(process);
+    }
+
+    let mut deduped: Vec<_> = by_pid.into_values().collect();
+    deduped.sort_by(|left, right| {
+        left.display_name
+            .cmp(&right.display_name)
+            .then(left.pid.cmp(&right.pid))
+    });
+    deduped
+}
+
+fn parse_port_from_lsof_name(value: &str) -> Option<u16> {
+    let port_segment = value
+        .rsplit(':')
+        .next()?
+        .split("->")
+        .next()?
+        .trim_matches(|character: char| !character.is_ascii_digit());
+    port_segment.parse().ok()
+}
+
+fn display_name_from_command(command: &str) -> String {
+    let executable = executable_name_from_command(command);
+    executable
+        .strip_suffix(".app")
+        .unwrap_or(executable.as_str())
+        .to_string()
+}
+
+fn executable_name_from_command(command: &str) -> String {
+    Path::new(command)
+        .file_name()
+        .and_then(OsStr::to_str)
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(command)
+        .to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -242,5 +507,58 @@ mod tests {
         };
 
         assert_eq!(compare_app_priority(&better, &worse), Ordering::Less);
+    }
+
+    #[test]
+    fn parses_port_queries_from_prefix_or_digits() {
+        assert_eq!(parse_port_query("8080"), Some(8080));
+        assert_eq!(parse_port_query("port 3000"), Some(3000));
+        assert_eq!(parse_port_query("preview"), None);
+    }
+
+    #[test]
+    fn parses_process_rows_from_ps_output() {
+        let output = "  123 /Applications/Arc.app/Contents/MacOS/Arc /Applications/Arc.app/Contents/MacOS/Arc --flag\n  777 /usr/bin/node node server.js\n";
+        let processes = parse_ps_output(output);
+
+        assert_eq!(processes.len(), 2);
+        assert_eq!(processes[0].display_name, "Arc");
+        assert_eq!(processes[1].display_name, "node");
+        assert_eq!(processes[1].command, "/usr/bin/node node server.js");
+    }
+
+    #[test]
+    fn filters_processes_by_name_and_prefix_rank() {
+        let processes = vec![
+            ProcessMatch {
+                pid: 10,
+                display_name: "Preview".into(),
+                executable_name: "Preview".into(),
+                command: "/Applications/Preview.app".into(),
+                matched_ports: Vec::new(),
+            },
+            ProcessMatch {
+                pid: 20,
+                display_name: "Arc".into(),
+                executable_name: "Arc".into(),
+                command: "/Applications/Arc.app".into(),
+                matched_ports: Vec::new(),
+            },
+        ];
+
+        let matches = filter_processes_by_name(&processes, "ar");
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].display_name, "Arc");
+    }
+
+    #[test]
+    fn parses_lsof_output_into_pid_rows() {
+        let output =
+            "p123\ncnode\nnTCP *:8080 (LISTEN)\np124\ncpython\nnTCP 127.0.0.1:8080 (LISTEN)\n";
+        let matches = parse_lsof_output(output, 8080);
+
+        assert_eq!(matches.len(), 2);
+        assert_eq!(matches[0].matched_ports, vec![8080]);
+        assert_eq!(matches[1].matched_ports, vec![8080]);
     }
 }

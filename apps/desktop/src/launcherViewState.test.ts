@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { PendingExecution, SearchResult } from "./commandExecution";
+import type { InteractiveSessionState, PendingExecution, SearchResult } from "./commandExecution";
 import { getLauncherViewState, isLauncherIdle, shouldRunSearch } from "./launcherViewState";
 
 const searchResult = (overrides: Partial<SearchResult> = {}): SearchResult => ({
@@ -31,6 +31,17 @@ const pendingExecution: PendingExecution = {
   currentIndex: 0,
 };
 
+const interactiveSession: InteractiveSessionState = {
+  session_id: "session-1",
+  command_id: "kill",
+  title: "Kill Process",
+  subtitle: "Search by app, process, or port",
+  input_placeholder: "Search process name or port 8080",
+  query: "",
+  results: [],
+  message: null,
+};
+
 describe("launcher view state", () => {
   it("keeps the header visible while idle", () => {
     expect(
@@ -39,6 +50,7 @@ describe("launcher view state", () => {
         executionResult: "",
         error: "",
         pendingExecution: null,
+        interactiveSession: null,
       }),
     ).toBe(true);
 
@@ -49,6 +61,7 @@ describe("launcher view state", () => {
         executionResult: "",
         error: "",
         pendingExecution: null,
+        interactiveSession: null,
       }),
     ).toEqual({
       idle: true,
@@ -57,13 +70,23 @@ describe("launcher view state", () => {
       showEmptyResults: false,
       showFooter: false,
       showingArgumentPrompt: false,
+      showingInteractiveSession: false,
     });
   });
 
   it("runs search only for non-empty queries outside argument entry", () => {
-    expect(shouldRunSearch({ query: "", pendingExecution: null })).toBe(false);
-    expect(shouldRunSearch({ query: "arc", pendingExecution: null })).toBe(true);
-    expect(shouldRunSearch({ query: "arc", pendingExecution })).toBe(false);
+    expect(shouldRunSearch({ query: "", pendingExecution: null, interactiveSession: null })).toBe(
+      false,
+    );
+    expect(
+      shouldRunSearch({ query: "arc", pendingExecution: null, interactiveSession: null }),
+    ).toBe(true);
+    expect(shouldRunSearch({ query: "arc", pendingExecution, interactiveSession: null })).toBe(
+      false,
+    );
+    expect(shouldRunSearch({ query: "arc", pendingExecution: null, interactiveSession })).toBe(
+      false,
+    );
   });
 
   it("shows the empty state after a typed query returns no matches", () => {
@@ -74,6 +97,7 @@ describe("launcher view state", () => {
         executionResult: "",
         error: "",
         pendingExecution: null,
+        interactiveSession: null,
       }),
     ).toMatchObject({
       idle: false,
@@ -82,6 +106,7 @@ describe("launcher view state", () => {
       showEmptyResults: true,
       showFooter: false,
       showingArgumentPrompt: false,
+      showingInteractiveSession: false,
     });
   });
 
@@ -93,6 +118,7 @@ describe("launcher view state", () => {
         executionResult: "",
         error: "",
         pendingExecution: null,
+        interactiveSession: null,
       }).idle,
     ).toBe(true);
   });
@@ -105,6 +131,7 @@ describe("launcher view state", () => {
         executionResult: "",
         error: "",
         pendingExecution,
+        interactiveSession: null,
       }),
     ).toEqual({
       idle: false,
@@ -113,6 +140,28 @@ describe("launcher view state", () => {
       showEmptyResults: false,
       showFooter: true,
       showingArgumentPrompt: true,
+      showingInteractiveSession: false,
+    });
+  });
+
+  it("keeps interactive sessions visible with an empty query", () => {
+    expect(
+      getLauncherViewState({
+        query: "",
+        results: [],
+        executionResult: "",
+        error: "",
+        pendingExecution: null,
+        interactiveSession,
+      }),
+    ).toEqual({
+      idle: false,
+      showHeader: true,
+      showResults: true,
+      showEmptyResults: false,
+      showFooter: true,
+      showingArgumentPrompt: false,
+      showingInteractiveSession: true,
     });
   });
 });

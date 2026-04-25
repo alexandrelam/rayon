@@ -4,7 +4,8 @@ import { type KeyboardEvent, useEffect, useRef, useState } from "react";
 import {
   beginPendingExecution,
   type CommandArgumentValue,
-  type CommandExecutionResult,
+  type CommandInvocationResult,
+  type InteractiveSessionState,
   currentArgument,
   currentArgumentInputValue,
   type PendingExecution,
@@ -18,10 +19,14 @@ function App() {
   const inputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
+  const [interactiveSession, setInteractiveSession] = useState<InteractiveSessionState | null>(
+    null,
+  );
   const [selectedIndex, setSelectedIndex] = useState(0);
-  const [executionResult, setExecutionResult] = useState<string>("");
-  const [error, setError] = useState<string>("");
+  const [executionResult, setExecutionResult] = useState("");
+  const [error, setError] = useState("");
   const [pendingExecution, setPendingExecution] = useState<PendingExecution | null>(null);
+  const interactiveSessionId = interactiveSession?.session_id ?? null;
 
   function resetLauncher() {
     setQuery("");
@@ -29,6 +34,7 @@ function App() {
     setError("");
     setSelectedIndex(0);
     setPendingExecution(null);
+    setInteractiveSession(null);
     setResults([]);
     requestAnimationFrame(() => {
       inputRef.current?.focus();
@@ -57,7 +63,7 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!shouldRunSearch({ query, pendingExecution })) {
+    if (!shouldRunSearch({ query, pendingExecution, interactiveSession })) {
       return;
     }
 
@@ -95,22 +101,79 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [query, pendingExecution]);
+  }, [query, pendingExecution, interactiveSession]);
+
+  useEffect(() => {
+    if (!interactiveSessionId) {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function runInteractiveSearch() {
+      try {
+        const nextSession = await invoke<InteractiveSessionState>("search_interactive_session", {
+          request: {
+            session_id: interactiveSessionId,
+            query,
+          },
+        });
+        if (cancelled) {
+          return;
+        }
+
+        setInteractiveSession(nextSession);
+        setSelectedIndex((currentIndex) => {
+          if (nextSession.results.length === 0) {
+            return 0;
+          }
+
+          return Math.min(currentIndex, nextSession.results.length - 1);
+        });
+        setError("");
+      } catch (searchError) {
+        if (cancelled) {
+          return;
+        }
+
+        setError(searchError instanceof Error ? searchError.message : String(searchError));
+      }
+    }
+
+    void runInteractiveSearch();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [interactiveSessionId, query]);
 
   async function executeCommand(
     commandId: string,
     argumentsMap: Record<string, CommandArgumentValue>,
   ) {
     try {
-      const response = await invoke<CommandExecutionResult>("execute_command", {
+      const response = await invoke<CommandInvocationResult>("execute_command", {
         request: {
           command_id: commandId,
           arguments: argumentsMap,
         },
       });
+
+      if (response.kind === "started_session") {
+        setInteractiveSession(response.session);
+        setQuery(response.session.query);
+        setResults([]);
+        setExecutionResult("");
+        setError("");
+        setPendingExecution(null);
+        setSelectedIndex(0);
+        return;
+      }
+
       setExecutionResult(response.output);
       setError("");
       setPendingExecution(null);
+      setInteractiveSession(null);
       inputRef.current?.focus();
     } catch (executionError) {
       setExecutionResult("");
@@ -122,11 +185,11 @@ function App() {
     setQuery(nextQuery);
     setError("");
 
-    if (!pendingExecution && nextQuery !== "") {
+    if (!pendingExecution && !interactiveSession && nextQuery !== "") {
       setExecutionResult("");
     }
 
-    if (!pendingExecution && nextQuery === "") {
+    if (!pendingExecution && !interactiveSession && nextQuery === "") {
       setResults([]);
       setSelectedIndex(0);
     }
@@ -155,18 +218,51 @@ function App() {
     await executeResult(selectedCommand);
   }
 
+  async function submitInteractiveSelection(itemId?: string) {
+    if (!interactiveSession || interactiveSession.results.length === 0) {
+      return;
+    }
+
+    const selectedResult =
+      interactiveSession.results.find((result) => result.id === itemId) ??
+      interactiveSession.results[selectedIndex];
+    try {
+      const nextSession = await invoke<InteractiveSessionState>("submit_interactive_session", {
+        request: {
+          session_id: interactiveSession.session_id,
+          query,
+          item_id: selectedResult.id,
+        },
+      });
+      setInteractiveSession(nextSession);
+      setSelectedIndex((currentIndex) => {
+        if (nextSession.results.length === 0) {
+          return 0;
+        }
+
+        return Math.min(currentIndex, nextSession.results.length - 1);
+      });
+      setExecutionResult("");
+      setError("");
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : String(submitError));
+    }
+  }
+
   function moveSelection(direction: -1 | 1) {
+    const activeResults = interactiveSession ? interactiveSession.results : results;
+
     setSelectedIndex((currentIndex) => {
-      if (results.length === 0) {
+      if (activeResults.length === 0) {
         return 0;
       }
 
       const nextIndex = currentIndex + direction;
       if (nextIndex < 0) {
-        return results.length - 1;
+        return activeResults.length - 1;
       }
 
-      if (nextIndex >= results.length) {
+      if (nextIndex >= activeResults.length) {
         return 0;
       }
 
@@ -233,6 +329,33 @@ function App() {
       return;
     }
 
+    if (interactiveSession) {
+      switch (event.key) {
+        case "ArrowDown":
+          event.preventDefault();
+          moveSelection(1);
+          break;
+        case "ArrowUp":
+          event.preventDefault();
+          moveSelection(-1);
+          break;
+        case "Enter":
+          event.preventDefault();
+          void submitInteractiveSelection();
+          break;
+        case "Escape":
+          event.preventDefault();
+          setInteractiveSession(null);
+          setQuery("");
+          setError("");
+          setSelectedIndex(0);
+          return;
+        default:
+          break;
+      }
+      return;
+    }
+
     switch (event.key) {
       case "ArrowDown":
         event.preventDefault();
@@ -274,20 +397,28 @@ function App() {
     executionResult,
     error,
     pendingExecution,
+    interactiveSession,
   });
-
   return (
     <main className="launcher-shell">
       <section className="palette" aria-label="Command palette">
         {viewState.showHeader ? (
           <header className="palette-header">
             <p className="eyebrow">rayon</p>
-            <h1>{pendingExecution ? pendingExecution.commandTitle : "Command Palette"}</h1>
+            <h1>
+              {pendingExecution
+                ? pendingExecution.commandTitle
+                : interactiveSession
+                  ? interactiveSession.title
+                  : "Command Palette"}
+            </h1>
             {pendingExecution && activeArgument ? (
               <p className="arg-prompt">
                 {activeArgument.label}
                 {activeArgument.required ? " · required" : " · optional"}
               </p>
+            ) : interactiveSession?.subtitle ? (
+              <p className="arg-prompt">{interactiveSession.subtitle}</p>
             ) : null}
           </header>
         ) : null}
@@ -305,7 +436,9 @@ function App() {
               ? activeArgument.argument_type === "boolean"
                 ? "true / false"
                 : activeArgument.label
-              : "Type a command"
+              : interactiveSession
+                ? interactiveSession.input_placeholder
+                : "Type a command"
           }
           spellCheck={false}
           autoCapitalize="off"
@@ -326,49 +459,80 @@ function App() {
           </section>
         ) : viewState.showResults ? (
           <ul className="results" aria-label="Search results">
-            {results.map((result, index) => (
-              <li key={result.id}>
-                <button
-                  type="button"
-                  className={index === selectedIndex ? "result is-selected" : "result"}
-                  onMouseDown={(event) => {
-                    event.preventDefault();
-                  }}
-                  onClick={() => {
-                    setSelectedIndex(index);
-                    void executeResult(result);
-                  }}
-                >
-                  <span className="result-copy">
-                    <span className="result-row">
-                      <span className="result-title">{result.title}</span>
-                      <span className="result-kind">
-                        {result.kind === "application"
-                          ? "App"
-                          : result.arguments.length > 0
-                            ? "Action"
-                            : "Command"}
+            {interactiveSession
+              ? interactiveSession.results.map((result, index) => (
+                  <li key={result.id}>
+                    <button
+                      type="button"
+                      className={index === selectedIndex ? "result is-selected" : "result"}
+                      onMouseDown={(event) => {
+                        event.preventDefault();
+                      }}
+                      onClick={() => {
+                        setSelectedIndex(index);
+                        void submitInteractiveSelection(result.id);
+                      }}
+                    >
+                      <span className="result-copy">
+                        <span className="result-row">
+                          <span className="result-title">{result.title}</span>
+                          <span className="result-kind">Process</span>
+                        </span>
+                        <span className="result-meta">{result.subtitle ?? result.id}</span>
                       </span>
-                    </span>
-                    <span className="result-meta">
-                      {result.subtitle ?? result.owner_plugin_id ?? result.id}
-                    </span>
-                  </span>
-                </button>
-              </li>
-            ))}
+                    </button>
+                  </li>
+                ))
+              : results.map((result, index) => (
+                  <li key={result.id}>
+                    <button
+                      type="button"
+                      className={index === selectedIndex ? "result is-selected" : "result"}
+                      onMouseDown={(event) => {
+                        event.preventDefault();
+                      }}
+                      onClick={() => {
+                        setSelectedIndex(index);
+                        void executeResult(result);
+                      }}
+                    >
+                      <span className="result-copy">
+                        <span className="result-row">
+                          <span className="result-title">{result.title}</span>
+                          <span className="result-kind">
+                            {result.kind === "application"
+                              ? "App"
+                              : result.arguments.length > 0
+                                ? "Action"
+                                : "Command"}
+                          </span>
+                        </span>
+                        <span className="result-meta">
+                          {result.subtitle ?? result.owner_plugin_id ?? result.id}
+                        </span>
+                      </span>
+                    </button>
+                  </li>
+                ))}
             {viewState.showEmptyResults ? (
               <li className="result result-empty">No matches found.</li>
+            ) : null}
+            {interactiveSession?.results.length === 0 ? (
+              <li className="result result-empty">No matching processes.</li>
             ) : null}
           </ul>
         ) : null}
 
         {viewState.showFooter ? (
           <section className="output" aria-live="polite">
-            {executionResult ? (
+            {interactiveSession?.message ? (
+              <p>{interactiveSession.message}</p>
+            ) : executionResult ? (
               <p>{executionResult}</p>
             ) : pendingExecution ? (
               <p className="muted">Press Enter to continue.</p>
+            ) : interactiveSession ? (
+              <p className="muted">Press Enter to terminate the selected process.</p>
             ) : null}
             {error ? <p className="error">{error}</p> : null}
           </section>

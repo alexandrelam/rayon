@@ -6,11 +6,15 @@ use rayon_db::{SearchIndexStats, TantivySearchIndex};
 use rayon_platform::MacOsAppManager;
 use rayon_types::{
     BookmarkDefinition, CommandDefinition, CommandExecutionRequest, CommandExecutionResult,
-    CommandId, InstalledApp, SearchResult, SearchResultKind, SearchableItemDocument,
+    CommandId, CommandInvocationResult, InstalledApp, InteractiveSessionMetadata,
+    InteractiveSessionQueryRequest, InteractiveSessionResult, InteractiveSessionState,
+    InteractiveSessionSubmitRequest, ProcessMatch, SearchResult, SearchResultKind,
+    SearchableItemDocument,
 };
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 pub const APP_REINDEX_COMMAND_ID: &str = "apps.reindex";
@@ -22,6 +26,40 @@ pub trait CommandProvider: Send + Sync {
         &self,
         request: &CommandExecutionRequest,
     ) -> Result<CommandExecutionResult, CommandError>;
+
+    fn start_interactive_session(
+        &self,
+        _command_id: &CommandId,
+    ) -> Result<Option<InteractiveSessionMetadata>, CommandError> {
+        Ok(None)
+    }
+
+    fn search_interactive_session(
+        &self,
+        _session: &InteractiveSessionMetadata,
+        _query: &str,
+    ) -> Result<Vec<InteractiveSessionResult>, CommandError> {
+        Err(CommandError::ExecutionFailed(
+            "interactive session search is not supported".into(),
+        ))
+    }
+
+    fn submit_interactive_session(
+        &self,
+        _session: &InteractiveSessionMetadata,
+        _query: &str,
+        _item_id: &str,
+    ) -> Result<InteractiveSessionUpdate, CommandError> {
+        Err(CommandError::ExecutionFailed(
+            "interactive session submit is not supported".into(),
+        ))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InteractiveSessionUpdate {
+    pub results: Vec<InteractiveSessionResult>,
+    pub message: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,6 +89,7 @@ impl Error for CommandError {}
 pub enum LauncherError {
     Command(CommandError),
     AppNotFound(CommandId),
+    InteractiveSessionNotFound(String),
     Platform(String),
     SearchBackend(String),
 }
@@ -60,6 +99,9 @@ impl fmt::Display for LauncherError {
         match self {
             Self::Command(error) => write!(f, "{error}"),
             Self::AppNotFound(command_id) => write!(f, "unknown application id: {command_id}"),
+            Self::InteractiveSessionNotFound(session_id) => {
+                write!(f, "unknown interactive session: {session_id}")
+            }
             Self::Platform(error) => write!(f, "{error}"),
             Self::SearchBackend(error) => write!(f, "{error}"),
         }
@@ -125,6 +167,42 @@ impl CommandRegistry {
         self.providers[provider_index].execute(request)
     }
 
+    fn start_interactive_session(
+        &self,
+        command_id: &CommandId,
+    ) -> Result<Option<InteractiveSessionOwner>, CommandError> {
+        let provider_index = self
+            .command_owners
+            .get(command_id.as_str())
+            .copied()
+            .ok_or_else(|| CommandError::UnknownCommand(command_id.clone()))?;
+        let provider = &self.providers[provider_index];
+        let metadata = provider.start_interactive_session(command_id)?;
+        Ok(metadata.map(|metadata| InteractiveSessionOwner {
+            provider_index,
+            metadata,
+        }))
+    }
+
+    fn search_interactive_session(
+        &self,
+        provider_index: usize,
+        session: &InteractiveSessionMetadata,
+        query: &str,
+    ) -> Result<Vec<InteractiveSessionResult>, CommandError> {
+        self.providers[provider_index].search_interactive_session(session, query)
+    }
+
+    fn submit_interactive_session(
+        &self,
+        provider_index: usize,
+        session: &InteractiveSessionMetadata,
+        query: &str,
+        item_id: &str,
+    ) -> Result<InteractiveSessionUpdate, CommandError> {
+        self.providers[provider_index].submit_interactive_session(session, query, item_id)
+    }
+
     pub fn search_results_by_id(&self) -> HashMap<String, SearchResult> {
         self.commands
             .iter()
@@ -183,6 +261,8 @@ pub trait AppPlatform: Send + Sync {
     fn discover_apps(&self) -> Result<Vec<InstalledApp>, String>;
     fn launch_app(&self, app: &InstalledApp) -> Result<(), String>;
     fn open_url(&self, url: &str) -> Result<(), String>;
+    fn search_processes(&self, query: &str) -> Result<Vec<ProcessMatch>, String>;
+    fn terminate_process(&self, pid: u32) -> Result<(), String>;
 }
 
 pub trait SearchIndex: Send + Sync {
@@ -202,6 +282,14 @@ impl AppPlatform for MacOsAppManager {
 
     fn open_url(&self, url: &str) -> Result<(), String> {
         MacOsAppManager::open_url(self, url)
+    }
+
+    fn search_processes(&self, query: &str) -> Result<Vec<ProcessMatch>, String> {
+        MacOsAppManager::search_processes(self, query)
+    }
+
+    fn terminate_process(&self, pid: u32) -> Result<(), String> {
+        MacOsAppManager::terminate_process(self, pid)
     }
 }
 
@@ -361,12 +449,50 @@ fn write_app_catalog(app_catalog: &RwLock<AppCatalog>) -> RwLockWriteGuard<'_, A
     }
 }
 
+fn read_interactive_sessions(
+    sessions: &RwLock<HashMap<String, ActiveInteractiveSession>>,
+) -> RwLockReadGuard<'_, HashMap<String, ActiveInteractiveSession>> {
+    match sessions.read() {
+        Ok(sessions) => sessions,
+        Err(poisoned) => {
+            eprintln!("interactive session lock poisoned while reading");
+            poisoned.into_inner()
+        }
+    }
+}
+
+fn write_interactive_sessions(
+    sessions: &RwLock<HashMap<String, ActiveInteractiveSession>>,
+) -> RwLockWriteGuard<'_, HashMap<String, ActiveInteractiveSession>> {
+    match sessions.write() {
+        Ok(sessions) => sessions,
+        Err(poisoned) => {
+            eprintln!("interactive session lock poisoned while writing");
+            poisoned.into_inner()
+        }
+    }
+}
+
+#[derive(Clone)]
+struct InteractiveSessionOwner {
+    provider_index: usize,
+    metadata: InteractiveSessionMetadata,
+}
+
+#[derive(Clone)]
+struct ActiveInteractiveSession {
+    provider_index: usize,
+    metadata: InteractiveSessionMetadata,
+}
+
 pub struct LauncherService {
     registry: CommandRegistry,
     platform: Arc<dyn AppPlatform>,
     search_index: Arc<dyn SearchIndex>,
     app_catalog: RwLock<AppCatalog>,
     bookmark_catalog: BookmarkCatalog,
+    interactive_sessions: RwLock<HashMap<String, ActiveInteractiveSession>>,
+    next_session_id: AtomicU64,
 }
 
 impl LauncherService {
@@ -390,6 +516,8 @@ impl LauncherService {
             search_index,
             app_catalog: RwLock::new(app_catalog),
             bookmark_catalog: BookmarkCatalog::from_bookmarks(bookmarks),
+            interactive_sessions: RwLock::new(HashMap::new()),
+            next_session_id: AtomicU64::new(1),
         };
 
         if let Err(error) = service.reindex_search() {
@@ -419,23 +547,125 @@ impl LauncherService {
             .collect()
     }
 
-    pub fn execute(
+    pub fn execute_command(
         &self,
         request: &CommandExecutionRequest,
-    ) -> Result<CommandExecutionResult, LauncherError> {
+    ) -> Result<CommandInvocationResult, LauncherError> {
         if request.command_id.as_str() == APP_REINDEX_COMMAND_ID {
-            return self.refresh_and_reindex();
+            let result = self.refresh_and_reindex()?;
+            return Ok(CommandInvocationResult::Completed {
+                output: result.output,
+            });
         }
 
         if request.command_id.as_str().starts_with("app:macos:") {
-            return self.launch_app(&request.command_id);
+            let result = self.launch_app(&request.command_id)?;
+            return Ok(CommandInvocationResult::Completed {
+                output: result.output,
+            });
         }
 
         if self.bookmark_catalog.get(&request.command_id).is_some() {
-            return self.open_bookmark(&request.command_id);
+            let result = self.open_bookmark(&request.command_id)?;
+            return Ok(CommandInvocationResult::Completed {
+                output: result.output,
+            });
         }
 
-        self.registry.execute(request).map_err(LauncherError::from)
+        if let Some(session_owner) = self
+            .registry
+            .start_interactive_session(&request.command_id)?
+        {
+            let session_id = self.allocate_session_id();
+            let metadata = InteractiveSessionMetadata {
+                session_id: session_id.clone(),
+                command_id: session_owner.metadata.command_id.clone(),
+                title: session_owner.metadata.title,
+                subtitle: session_owner.metadata.subtitle,
+                input_placeholder: session_owner.metadata.input_placeholder,
+            };
+
+            write_interactive_sessions(&self.interactive_sessions).insert(
+                session_id.clone(),
+                ActiveInteractiveSession {
+                    provider_index: session_owner.provider_index,
+                    metadata: metadata.clone(),
+                },
+            );
+
+            let results = self.registry.search_interactive_session(
+                session_owner.provider_index,
+                &metadata,
+                "",
+            )?;
+            return Ok(CommandInvocationResult::StartedSession {
+                session: InteractiveSessionState {
+                    session_id,
+                    command_id: metadata.command_id,
+                    title: metadata.title,
+                    subtitle: metadata.subtitle,
+                    input_placeholder: metadata.input_placeholder,
+                    query: String::new(),
+                    results,
+                    message: None,
+                },
+            });
+        }
+
+        let result = self
+            .registry
+            .execute(request)
+            .map_err(LauncherError::from)?;
+        Ok(CommandInvocationResult::Completed {
+            output: result.output,
+        })
+    }
+
+    pub fn search_interactive_session(
+        &self,
+        request: &InteractiveSessionQueryRequest,
+    ) -> Result<InteractiveSessionState, LauncherError> {
+        let session = self.active_session(&request.session_id)?;
+        let results = self.registry.search_interactive_session(
+            session.provider_index,
+            &session.metadata,
+            &request.query,
+        )?;
+
+        Ok(InteractiveSessionState {
+            session_id: session.metadata.session_id,
+            command_id: session.metadata.command_id,
+            title: session.metadata.title,
+            subtitle: session.metadata.subtitle,
+            input_placeholder: session.metadata.input_placeholder,
+            query: request.query.clone(),
+            results,
+            message: None,
+        })
+    }
+
+    pub fn submit_interactive_session(
+        &self,
+        request: &InteractiveSessionSubmitRequest,
+    ) -> Result<InteractiveSessionState, LauncherError> {
+        let session = self.active_session(&request.session_id)?;
+        let update = self.registry.submit_interactive_session(
+            session.provider_index,
+            &session.metadata,
+            &request.query,
+            &request.item_id,
+        )?;
+
+        Ok(InteractiveSessionState {
+            session_id: session.metadata.session_id,
+            command_id: session.metadata.command_id,
+            title: session.metadata.title,
+            subtitle: session.metadata.subtitle,
+            input_placeholder: session.metadata.input_placeholder,
+            query: request.query.clone(),
+            results: update.results,
+            message: update.message,
+        })
     }
 
     pub fn search_enabled(&self) -> bool {
@@ -507,13 +737,25 @@ impl LauncherService {
             output: format!("opened {}", bookmark.title),
         })
     }
+
+    fn active_session(&self, session_id: &str) -> Result<ActiveInteractiveSession, LauncherError> {
+        read_interactive_sessions(&self.interactive_sessions)
+            .get(session_id)
+            .cloned()
+            .ok_or_else(|| LauncherError::InteractiveSessionNotFound(session_id.to_string()))
+    }
+
+    fn allocate_session_id(&self) -> String {
+        let next_id = self.next_session_id.fetch_add(1, Ordering::Relaxed);
+        format!("session-{next_id}")
+    }
 }
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use rayon_types::{CommandArgumentType, CommandExecutionRequest};
+    use rayon_types::{CommandArgumentDefinition, CommandArgumentType, InteractiveSessionMetadata};
     use std::sync::Mutex;
 
     struct TestProvider;
@@ -535,7 +777,7 @@ mod tests {
                     subtitle: None,
                     owner_plugin_id: "builtin.echo".into(),
                     keywords: vec![],
-                    arguments: vec![rayon_types::CommandArgumentDefinition {
+                    arguments: vec![CommandArgumentDefinition {
                         id: String::from("message"),
                         label: String::from("Message"),
                         argument_type: CommandArgumentType::String,
@@ -544,6 +786,14 @@ mod tests {
                         positional: Some(0),
                         default_value: None,
                     }],
+                },
+                CommandDefinition {
+                    id: CommandId::from("kill"),
+                    title: "Kill Process".into(),
+                    subtitle: Some("Terminate a running process".into()),
+                    owner_plugin_id: "builtin.kill".into(),
+                    keywords: vec!["terminate".into()],
+                    arguments: vec![],
                 },
             ]
         }
@@ -556,12 +806,59 @@ mod tests {
                 output: format!("ran:{}", request.command_id),
             })
         }
+
+        fn start_interactive_session(
+            &self,
+            command_id: &CommandId,
+        ) -> Result<Option<InteractiveSessionMetadata>, CommandError> {
+            if command_id.as_str() != "kill" {
+                return Ok(None);
+            }
+
+            Ok(Some(InteractiveSessionMetadata {
+                session_id: String::new(),
+                command_id: command_id.clone(),
+                title: "Kill Process".into(),
+                subtitle: Some("Terminate a running process".into()),
+                input_placeholder: "Search by process name or port".into(),
+            }))
+        }
+
+        fn search_interactive_session(
+            &self,
+            _session: &InteractiveSessionMetadata,
+            query: &str,
+        ) -> Result<Vec<InteractiveSessionResult>, CommandError> {
+            Ok(vec![InteractiveSessionResult {
+                id: format!("result:{query}"),
+                title: "Arc".into(),
+                subtitle: Some("PID 1234".into()),
+            }])
+        }
+
+        fn submit_interactive_session(
+            &self,
+            _session: &InteractiveSessionMetadata,
+            query: &str,
+            item_id: &str,
+        ) -> Result<InteractiveSessionUpdate, CommandError> {
+            Ok(InteractiveSessionUpdate {
+                results: vec![InteractiveSessionResult {
+                    id: format!("refresh:{query}"),
+                    title: "Preview".into(),
+                    subtitle: Some("PID 99".into()),
+                }],
+                message: Some(format!("terminated {item_id}")),
+            })
+        }
     }
 
     struct StubPlatform {
         apps: Vec<InstalledApp>,
         launched: Mutex<Vec<String>>,
         opened_urls: Mutex<Vec<String>>,
+        process_search_results: Mutex<Vec<ProcessMatch>>,
+        terminated_pids: Mutex<Vec<u32>>,
     }
 
     impl AppPlatform for StubPlatform {
@@ -576,6 +873,15 @@ mod tests {
 
         fn open_url(&self, url: &str) -> Result<(), String> {
             self.opened_urls.lock().unwrap().push(url.to_string());
+            Ok(())
+        }
+
+        fn search_processes(&self, _query: &str) -> Result<Vec<ProcessMatch>, String> {
+            Ok(self.process_search_results.lock().unwrap().clone())
+        }
+
+        fn terminate_process(&self, pid: u32) -> Result<(), String> {
+            self.terminated_pids.lock().unwrap().push(pid);
             Ok(())
         }
     }
@@ -621,13 +927,15 @@ mod tests {
             }],
             launched: Mutex::new(Vec::new()),
             opened_urls: Mutex::new(Vec::new()),
+            process_search_results: Mutex::new(Vec::new()),
+            terminated_pids: Mutex::new(Vec::new()),
         });
         let index = Arc::new(StubSearchIndex {
             configured: true,
             search_results,
             stats: SearchIndexStats {
                 discovered_count: 0,
-                indexed_count: 4,
+                indexed_count: 5,
                 skipped_count: 0,
             },
             last_documents: Mutex::new(Vec::new()),
@@ -710,13 +1018,18 @@ mod tests {
         let launcher = build_launcher_service(vec![]);
 
         let result = launcher
-            .execute(&CommandExecutionRequest {
+            .execute_command(&CommandExecutionRequest {
                 command_id: CommandId::from("app:macos:com.example.arc"),
                 arguments: HashMap::new(),
             })
             .unwrap();
 
-        assert_eq!(result.output, "opened Arc");
+        assert_eq!(
+            result,
+            CommandInvocationResult::Completed {
+                output: "opened Arc".into()
+            }
+        );
     }
 
     #[test]
@@ -724,13 +1037,18 @@ mod tests {
         let launcher = build_launcher_service(vec![]);
 
         let result = launcher
-            .execute(&CommandExecutionRequest {
+            .execute_command(&CommandExecutionRequest {
                 command_id: CommandId::from(APP_REINDEX_COMMAND_ID),
                 arguments: HashMap::new(),
             })
             .unwrap();
 
-        assert_eq!(result.output, "reindexed 4 searchable items (0 skipped)");
+        assert_eq!(
+            result,
+            CommandInvocationResult::Completed {
+                output: "reindexed 5 searchable items (0 skipped)".into()
+            }
+        );
     }
 
     #[test]
@@ -738,13 +1056,79 @@ mod tests {
         let launcher = build_launcher_service(vec![]);
 
         let result = launcher
-            .execute(&CommandExecutionRequest {
+            .execute_command(&CommandExecutionRequest {
                 command_id: CommandId::from("bookmark:github"),
                 arguments: HashMap::new(),
             })
             .unwrap();
 
-        assert_eq!(result.output, "opened GitHub");
+        assert_eq!(
+            result,
+            CommandInvocationResult::Completed {
+                output: "opened GitHub".into()
+            }
+        );
+    }
+
+    #[test]
+    fn execute_starts_interactive_session_for_kill() {
+        let launcher = build_launcher_service(vec![]);
+
+        let result = launcher
+            .execute_command(&CommandExecutionRequest {
+                command_id: CommandId::from("kill"),
+                arguments: HashMap::new(),
+            })
+            .unwrap();
+
+        assert!(matches!(
+            result,
+            CommandInvocationResult::StartedSession { .. }
+        ));
+        let CommandInvocationResult::StartedSession { session } = result else {
+            unreachable!();
+        };
+        assert_eq!(session.command_id, CommandId::from("kill"));
+        assert_eq!(session.title, "Kill Process");
+        assert_eq!(session.results[0].title, "Arc");
+    }
+
+    #[test]
+    fn interactive_session_search_and_submit_route_to_provider() {
+        let launcher = build_launcher_service(vec![]);
+
+        let session_result = launcher
+            .execute_command(&CommandExecutionRequest {
+                command_id: CommandId::from("kill"),
+                arguments: HashMap::new(),
+            })
+            .unwrap();
+        assert!(matches!(
+            session_result,
+            CommandInvocationResult::StartedSession { .. }
+        ));
+        let CommandInvocationResult::StartedSession { session } = session_result else {
+            unreachable!();
+        };
+
+        let searched = launcher
+            .search_interactive_session(&InteractiveSessionQueryRequest {
+                session_id: session.session_id.clone(),
+                query: "8080".into(),
+            })
+            .unwrap();
+        assert_eq!(searched.query, "8080");
+        assert_eq!(searched.results[0].id, "result:8080");
+
+        let submitted = launcher
+            .submit_interactive_session(&InteractiveSessionSubmitRequest {
+                session_id: session.session_id,
+                query: "arc".into(),
+                item_id: "1234".into(),
+            })
+            .unwrap();
+        assert_eq!(submitted.message, Some("terminated 1234".into()));
+        assert_eq!(submitted.results[0].id, "refresh:arc");
     }
 
     #[test]
@@ -761,13 +1145,15 @@ mod tests {
             }],
             launched: Mutex::new(Vec::new()),
             opened_urls: Mutex::new(Vec::new()),
+            process_search_results: Mutex::new(Vec::new()),
+            terminated_pids: Mutex::new(Vec::new()),
         });
         let index = Arc::new(StubSearchIndex {
             configured: true,
             search_results: Vec::new(),
             stats: SearchIndexStats {
                 discovered_count: 0,
-                indexed_count: 4,
+                indexed_count: 5,
                 skipped_count: 0,
             },
             last_documents: Mutex::new(Vec::new()),
@@ -788,7 +1174,7 @@ mod tests {
         );
         let documents = index.last_documents.lock().unwrap();
 
-        assert_eq!(documents.len(), 4);
+        assert_eq!(documents.len(), 5);
         assert!(documents
             .iter()
             .any(|document| document.id == CommandId::from("hello")));
@@ -798,5 +1184,8 @@ mod tests {
         assert!(documents
             .iter()
             .any(|document| document.id == CommandId::from("bookmark:github")));
+        assert!(documents
+            .iter()
+            .any(|document| document.id == CommandId::from("kill")));
     }
 }

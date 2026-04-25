@@ -1,4 +1,4 @@
-import type { PendingExecution, SearchResult } from "./commandExecution";
+import type { InteractiveSessionState, PendingExecution, SearchResult } from "./commandExecution";
 
 type LauncherViewStateInput = {
   query: string;
@@ -6,6 +6,7 @@ type LauncherViewStateInput = {
   executionResult: string;
   error: string;
   pendingExecution: PendingExecution | null;
+  interactiveSession: InteractiveSessionState | null;
 };
 
 export function isLauncherIdle({
@@ -13,28 +14,43 @@ export function isLauncherIdle({
   executionResult,
   error,
   pendingExecution,
+  interactiveSession,
 }: Omit<LauncherViewStateInput, "results">): boolean {
-  return query === "" && executionResult === "" && error === "" && pendingExecution === null;
+  return (
+    query === "" &&
+    executionResult === "" &&
+    error === "" &&
+    pendingExecution === null &&
+    interactiveSession === null
+  );
 }
 
 export function shouldRunSearch({
   query,
   pendingExecution,
-}: Pick<LauncherViewStateInput, "query" | "pendingExecution">): boolean {
-  return pendingExecution === null && query !== "";
+  interactiveSession,
+}: Pick<LauncherViewStateInput, "query" | "pendingExecution" | "interactiveSession">): boolean {
+  return pendingExecution === null && interactiveSession === null && query !== "";
 }
 
 export function getLauncherViewState(input: LauncherViewStateInput) {
   const idle = isLauncherIdle(input);
   const showingArgumentPrompt = input.pendingExecution !== null;
-  const showFooter = showingArgumentPrompt || input.executionResult !== "" || input.error !== "";
+  const showingInteractiveSession = input.interactiveSession !== null;
+  const showFooter =
+    showingArgumentPrompt ||
+    showingInteractiveSession ||
+    input.executionResult !== "" ||
+    input.error !== "";
 
   return {
     idle,
     showHeader: true,
     showResults: !idle && !showingArgumentPrompt,
-    showEmptyResults: !idle && !showingArgumentPrompt && input.results.length === 0,
+    showEmptyResults:
+      !idle && !showingArgumentPrompt && input.results.length === 0 && !showingInteractiveSession,
     showFooter,
     showingArgumentPrompt,
+    showingInteractiveSession,
   };
 }

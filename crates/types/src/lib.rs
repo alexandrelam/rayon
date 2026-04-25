@@ -129,6 +129,59 @@ pub struct CommandExecutionResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InteractiveSessionMetadata {
+    pub session_id: String,
+    pub command_id: CommandId,
+    pub title: String,
+    #[serde(default)]
+    pub subtitle: Option<String>,
+    pub input_placeholder: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InteractiveSessionResult {
+    pub id: String,
+    pub title: String,
+    #[serde(default)]
+    pub subtitle: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InteractiveSessionState {
+    pub session_id: String,
+    pub command_id: CommandId,
+    pub title: String,
+    #[serde(default)]
+    pub subtitle: Option<String>,
+    pub input_placeholder: String,
+    pub query: String,
+    #[serde(default)]
+    pub results: Vec<InteractiveSessionResult>,
+    #[serde(default)]
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InteractiveSessionQueryRequest {
+    pub session_id: String,
+    pub query: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InteractiveSessionSubmitRequest {
+    pub session_id: String,
+    pub query: String,
+    pub item_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CommandInvocationResult {
+    Completed { output: String },
+    StartedSession { session: InteractiveSessionState },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SearchResultKind {
     Command,
@@ -176,4 +229,13 @@ pub struct SearchableItemDocument {
     pub subtitle: Option<String>,
     pub owner_plugin_id: Option<String>,
     pub search_text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProcessMatch {
+    pub pid: u32,
+    pub display_name: String,
+    pub executable_name: String,
+    pub command: String,
+    pub matched_ports: Vec<u16>,
 }

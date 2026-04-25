@@ -24,6 +24,27 @@ export type CommandExecutionResult = {
   output: string;
 };
 
+export type InteractiveSessionResult = {
+  id: string;
+  title: string;
+  subtitle: string | null;
+};
+
+export type InteractiveSessionState = {
+  session_id: string;
+  command_id: string;
+  title: string;
+  subtitle: string | null;
+  input_placeholder: string;
+  query: string;
+  results: InteractiveSessionResult[];
+  message: string | null;
+};
+
+export type CommandInvocationResult =
+  | { kind: "completed"; output: string }
+  | { kind: "started_session"; session: InteractiveSessionState };
+
 export type CommandArgumentValue =
   | { type: "string"; value: string }
   | { type: "boolean"; value: boolean };
