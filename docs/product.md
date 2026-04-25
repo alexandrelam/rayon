@@ -4,56 +4,37 @@
 
 `rayon` is a Raycast-like desktop launcher built with Rust and Tauri.
 
-The product goal is a fast, local-first, keyboard-driven command launcher that starts with a minimal command palette and grows into an extensible system for built-in features and future extensions.
+The product goal is a fast, local-first, keyboard-driven launcher that grows into a plugin-oriented command platform.
 
 ## Product Direction
-
-The launcher should feel immediate and focused:
 
 - keyboard-first at all times
 - local-first by default
 - low-latency interaction
-- minimal visual noise
-- command-centric instead of window- or mouse-centric
+- command-centric instead of window-centric
 
-The command palette is the primary interface. The user types, sees matching commands, navigates with arrow keys, and executes with `Enter`. The product should feel closer to a terminal or editor command bar than a traditional desktop app UI.
+The command palette is the primary interface: type, search, select, execute.
 
 ## Platform Goals
 
 - macOS is the first target
 - the code structure should not block Linux later
-- OS-specific behavior should stay isolated from core command logic
+- OS-specific behavior should stay outside core command logic
 
 ## Architecture Goals
 
 - Rust owns the core logic
 - the Tauri frontend is a thin UI shell
-- the codebase stays modular and extensible
-- built-in features and future extensions should fit the same command system shape
-- avoid premature abstractions, but keep the right boundaries early
+- built-in modules and external plugins should fit the same command model
+- searchable records should be indexed through Tantivy
+- plugin loading should not require frontend API changes
 
-## Milestone 1
+## Current State
 
-The first milestone is intentionally small. It exists to validate the architecture and the interaction loop before adding search indexing or richer features.
-
-Current scope:
-
-- command palette UI
-- one built-in `hello` command
-- generic frontend-to-backend command flow
-- in-memory search
-- command execution returning a simple result string
-
-Out of scope for this milestone:
-
-- app indexing
-- persistence
-- plugin runtime
-- clipboard history
-- process management
-- global shortcuts
-- routing-heavy UI
-- external search systems
+- built-in providers exist
+- command execution is generic
+- Tantivy is integrated for app indexing
+- contributor plugins are not implemented yet
 
 ## User Experience Principles
 
@@ -67,11 +48,10 @@ Out of scope for this milestone:
 
 ## Long-Term Shape
 
-Over time, `rayon` should grow from a simple launcher into a general command platform:
+Over time, `rayon` should become a general command platform:
 
-- built-in features implemented as command providers
-- future extensions using the same conceptual interface
-- replaceable search/indexing implementation
-- optional platform-specific capabilities layered under the command system
+- built-in features and plugins register searchable items
+- Tantivy indexes those items
+- execution stays behind a generic command interface
 
-The key constraint is that growth should not compromise the core interaction model: open palette, type, select, execute.
+The core interaction model should stay unchanged: open palette, type, select, execute.

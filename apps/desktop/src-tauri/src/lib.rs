@@ -4,11 +4,11 @@ use tauri::{
     AppHandle, Emitter, Manager, WindowEvent,
 };
 
-use rayon_core::{CommandRegistry, LauncherService};
-use rayon_db::TantivyAppIndex;
+use rayon_core::{load_config_providers, CommandRegistry, LauncherService};
+use rayon_db::TantivySearchIndex;
 use rayon_features::built_in_providers;
 use rayon_platform::MacOsAppManager;
-use rayon_types::{CommandExecutionResult, CommandId, SearchResult};
+use rayon_types::{CommandExecutionRequest, CommandExecutionResult, SearchResult};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -29,8 +29,14 @@ impl AppState {
                 .expect("built-in providers must register without conflicts");
         }
 
+        for provider in load_config_providers().map_err(|error| error.to_string())? {
+            registry
+                .register_provider(provider)
+                .map_err(|error| error.to_string())?;
+        }
+
         let app_index = Arc::new(
-            TantivyAppIndex::open_or_create(app_search_index_path(app)?)
+            TantivySearchIndex::open_or_create(app_search_index_path(app)?)
                 .map_err(|error| error.to_string())?,
         );
         let platform = Arc::new(MacOsAppManager);
@@ -55,13 +61,12 @@ fn search(query: String, state: tauri::State<'_, AppState>) -> Vec<SearchResult>
 
 #[tauri::command]
 fn execute_command(
-    command_id: String,
-    payload: Option<String>,
+    request: CommandExecutionRequest,
     state: tauri::State<'_, AppState>,
 ) -> Result<CommandExecutionResult, String> {
     state
         .launcher
-        .execute(&CommandId::from(command_id), payload)
+        .execute(&request)
         .map_err(|error| error.to_string())
 }
 

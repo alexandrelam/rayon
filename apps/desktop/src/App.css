@@ -79,6 +79,12 @@ body {
   gap: 2px;
 }
 
+.arg-prompt {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--result-id);
+}
+
 .eyebrow {
   margin: 0;
   font-size: 0.73rem;
@@ -197,6 +203,10 @@ h1 {
   border-radius: 14px;
   border: 1px solid var(--output-border);
   background: var(--output-bg);
+}
+
+.output-arg {
+  min-height: 0;
 }
 
 .output p {

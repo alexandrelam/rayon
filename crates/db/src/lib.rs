@@ -1,4 +1,4 @@
-use rayon_types::InstalledApp;
+use rayon_types::{SearchResultKind, SearchableItemDocument};
 use std::collections::BTreeSet;
 use std::fmt;
 use std::fs;
@@ -6,27 +6,27 @@ use std::path::{Path, PathBuf};
 use tantivy::collector::TopDocs;
 use tantivy::directory::error::OpenDirectoryError;
 use tantivy::directory::MmapDirectory;
-use tantivy::query::QueryParser;
+use tantivy::query::{AllQuery, QueryParser};
 use tantivy::schema::{Field, Schema, Value, STORED, STRING, TEXT};
 use tantivy::{doc, Index, IndexReader, TantivyDocument};
 
 const INDEX_WRITER_HEAP_BYTES: usize = 50_000_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AppIndexStats {
+pub struct SearchIndexStats {
     pub discovered_count: usize,
     pub indexed_count: usize,
     pub skipped_count: usize,
 }
 
 #[derive(Debug)]
-pub enum TantivyAppIndexError {
+pub enum TantivySearchIndexError {
     Io(std::io::Error),
     Directory(OpenDirectoryError),
     Backend(tantivy::TantivyError),
 }
 
-impl fmt::Display for TantivyAppIndexError {
+impl fmt::Display for TantivySearchIndexError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Io(error) => write!(f, "{error}"),
@@ -36,71 +36,82 @@ impl fmt::Display for TantivyAppIndexError {
     }
 }
 
-impl std::error::Error for TantivyAppIndexError {}
+impl std::error::Error for TantivySearchIndexError {}
 
-impl From<std::io::Error> for TantivyAppIndexError {
+impl From<std::io::Error> for TantivySearchIndexError {
     fn from(value: std::io::Error) -> Self {
         Self::Io(value)
     }
 }
 
-impl From<OpenDirectoryError> for TantivyAppIndexError {
+impl From<OpenDirectoryError> for TantivySearchIndexError {
     fn from(value: OpenDirectoryError) -> Self {
         Self::Directory(value)
     }
 }
 
-impl From<tantivy::TantivyError> for TantivyAppIndexError {
+impl From<tantivy::TantivyError> for TantivySearchIndexError {
     fn from(value: tantivy::TantivyError) -> Self {
         Self::Backend(value)
     }
 }
 
 #[derive(Debug, Clone, Copy)]
-struct AppIndexFields {
+struct SearchIndexFields {
     id: Field,
+    kind: Field,
     title: Field,
-    bundle_identifier: Field,
-    bundle_name: Field,
+    subtitle: Field,
+    owner_plugin_id: Field,
+    search_text: Field,
 }
 
-impl AppIndexFields {
+impl SearchIndexFields {
     fn build_schema() -> (Schema, Self) {
         let mut schema_builder = Schema::builder();
         let id = schema_builder.add_text_field("id", STRING | STORED);
+        let kind = schema_builder.add_text_field("kind", STRING);
         let title = schema_builder.add_text_field("title", TEXT);
-        let bundle_identifier = schema_builder.add_text_field("bundle_identifier", TEXT);
-        let bundle_name = schema_builder.add_text_field("bundle_name", TEXT);
+        let subtitle = schema_builder.add_text_field("subtitle", TEXT);
+        let owner_plugin_id = schema_builder.add_text_field("owner_plugin_id", TEXT);
+        let search_text = schema_builder.add_text_field("search_text", TEXT);
         let schema = schema_builder.build();
 
         (
             schema,
             Self {
                 id,
+                kind,
                 title,
-                bundle_identifier,
-                bundle_name,
+                subtitle,
+                owner_plugin_id,
+                search_text,
             },
         )
     }
 }
 
-pub struct TantivyAppIndex {
+pub struct TantivySearchIndex {
     index: Index,
     reader: IndexReader,
-    fields: AppIndexFields,
+    fields: SearchIndexFields,
     path: PathBuf,
 }
 
-impl TantivyAppIndex {
-    pub fn open_or_create(path: impl AsRef<Path>) -> Result<Self, TantivyAppIndexError> {
+impl TantivySearchIndex {
+    pub fn open_or_create(path: impl AsRef<Path>) -> Result<Self, TantivySearchIndexError> {
         let path = path.as_ref().to_path_buf();
         fs::create_dir_all(&path)?;
 
-        let (schema, fields) = AppIndexFields::build_schema();
-        let directory = MmapDirectory::open(&path)?;
-        let index = Index::open_or_create(directory, schema)?;
-        let reader = index.reader()?;
+        let (schema, fields) = SearchIndexFields::build_schema();
+        let (index, reader) = match Self::open_index(&path, schema.clone()) {
+            Ok((index, reader)) => (index, reader),
+            Err(TantivySearchIndexError::Backend(error)) if is_schema_mismatch(&error) => {
+                rebuild_index_directory(&path)?;
+                Self::open_index(&path, schema)?
+            }
+            Err(error) => return Err(error),
+        };
 
         Ok(Self {
             index,
@@ -114,64 +125,69 @@ impl TantivyAppIndex {
         true
     }
 
-    pub fn search_app_ids(
+    pub fn search_item_ids(
         &self,
         query: &str,
         limit: usize,
-    ) -> Result<Vec<String>, TantivyAppIndexError> {
-        let query = query.trim();
-        if query.is_empty() || limit == 0 {
+    ) -> Result<Vec<String>, TantivySearchIndexError> {
+        if limit == 0 {
             return Ok(Vec::new());
         }
 
         let searcher = self.reader.searcher();
-        let query_parser = QueryParser::for_index(
-            &self.index,
-            vec![
-                self.fields.title,
-                self.fields.bundle_identifier,
-                self.fields.bundle_name,
-            ],
-        );
-        let (parsed_query, _errors) = query_parser.parse_query_lenient(query);
-        let top_docs =
-            searcher.search(&parsed_query, &TopDocs::with_limit(limit).order_by_score())?;
+        let top_docs = if query.trim().is_empty() {
+            searcher.search(&AllQuery, &TopDocs::with_limit(limit).order_by_score())?
+        } else {
+            let query_parser = QueryParser::for_index(
+                &self.index,
+                vec![
+                    self.fields.title,
+                    self.fields.subtitle,
+                    self.fields.owner_plugin_id,
+                    self.fields.search_text,
+                ],
+            );
+            let (parsed_query, _errors) = query_parser.parse_query_lenient(query.trim());
+            searcher.search(&parsed_query, &TopDocs::with_limit(limit).order_by_score())?
+        };
 
-        let mut app_ids = Vec::with_capacity(top_docs.len());
+        let mut item_ids = Vec::with_capacity(top_docs.len());
         for (_score, doc_address) in top_docs {
             let document = searcher.doc::<TantivyDocument>(doc_address)?;
-            if let Some(app_id) = document
+            if let Some(item_id) = document
                 .get_first(self.fields.id)
                 .and_then(|value| value.as_str())
             {
-                app_ids.push(app_id.to_string());
+                item_ids.push(item_id.to_string());
             }
         }
 
-        Ok(app_ids)
+        Ok(item_ids)
     }
 
-    pub fn reindex_apps(
+    pub fn replace_items(
         &self,
-        apps: &[InstalledApp],
-    ) -> Result<AppIndexStats, TantivyAppIndexError> {
+        items: &[SearchableItemDocument],
+    ) -> Result<SearchIndexStats, TantivySearchIndexError> {
         let mut writer = self.index.writer(INDEX_WRITER_HEAP_BYTES)?;
         writer.delete_all_documents()?;
 
         let mut indexed_count = 0;
         let mut skipped_count = 0;
-        for app in apps {
-            let fields = AppDocumentFields::from_app(app);
-            if fields.is_empty() {
+        for item in items {
+            let searchable_fields = SearchableFields::from_item(item);
+            if searchable_fields.is_empty() {
                 skipped_count += 1;
                 continue;
             }
 
             writer.add_document(doc!(
-                self.fields.id => app.id.as_str(),
-                self.fields.title => fields.title,
-                self.fields.bundle_identifier => fields.bundle_identifier,
-                self.fields.bundle_name => fields.bundle_name,
+                self.fields.id => item.id.as_str(),
+                self.fields.kind => search_kind(item.kind.clone()),
+                self.fields.title => searchable_fields.title,
+                self.fields.subtitle => searchable_fields.subtitle,
+                self.fields.owner_plugin_id => searchable_fields.owner_plugin_id,
+                self.fields.search_text => searchable_fields.search_text,
             ))?;
             indexed_count += 1;
         }
@@ -179,8 +195,8 @@ impl TantivyAppIndex {
         writer.commit()?;
         self.reader.reload()?;
 
-        Ok(AppIndexStats {
-            discovered_count: apps.len(),
+        Ok(SearchIndexStats {
+            discovered_count: items.len(),
             indexed_count,
             skipped_count,
         })
@@ -189,39 +205,67 @@ impl TantivyAppIndex {
     pub fn path(&self) -> &Path {
         &self.path
     }
+
+    fn open_index(
+        path: &Path,
+        schema: Schema,
+    ) -> Result<(Index, IndexReader), TantivySearchIndexError> {
+        let directory = MmapDirectory::open(path)?;
+        let index = Index::open_or_create(directory, schema)?;
+        let reader = index.reader()?;
+        Ok((index, reader))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct AppDocumentFields {
+struct SearchableFields {
     title: String,
-    bundle_identifier: String,
-    bundle_name: String,
+    subtitle: String,
+    owner_plugin_id: String,
+    search_text: String,
 }
 
-impl AppDocumentFields {
-    fn from_app(app: &InstalledApp) -> Self {
+impl SearchableFields {
+    fn from_item(item: &SearchableItemDocument) -> Self {
         Self {
-            title: prefix_search_terms(&app.title),
-            bundle_identifier: prefix_search_terms(
-                app.bundle_identifier.as_deref().unwrap_or_default(),
-            ),
-            bundle_name: prefix_search_terms(&app_bundle_name(app)),
+            title: prefix_search_terms(&item.title),
+            subtitle: prefix_search_terms(item.subtitle.as_deref().unwrap_or_default()),
+            owner_plugin_id: prefix_search_terms(item.owner_plugin_id.as_deref().unwrap_or_default()),
+            search_text: prefix_search_terms(&item.search_text),
         }
     }
 
     fn is_empty(&self) -> bool {
-        self.title.is_empty() && self.bundle_identifier.is_empty() && self.bundle_name.is_empty()
+        self.title.is_empty()
+            && self.subtitle.is_empty()
+            && self.owner_plugin_id.is_empty()
+            && self.search_text.is_empty()
     }
 }
 
-fn app_bundle_name(app: &InstalledApp) -> String {
-    Path::new(&app.path)
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .map(str::trim)
-        .filter(|name| !name.is_empty())
-        .unwrap_or_default()
-        .to_string()
+fn search_kind(kind: SearchResultKind) -> &'static str {
+    match kind {
+        SearchResultKind::Command => "command",
+        SearchResultKind::Application => "application",
+    }
+}
+
+fn is_schema_mismatch(error: &tantivy::TantivyError) -> bool {
+    match error {
+        tantivy::TantivyError::SchemaError(message) => {
+            message.contains("schema does not match")
+                || message.contains("An index exists but the schema does not match")
+        }
+        _ => false,
+    }
+}
+
+fn rebuild_index_directory(path: &Path) -> Result<(), TantivySearchIndexError> {
+    if path.exists() {
+        fs::remove_dir_all(path)?;
+    }
+    fs::create_dir_all(path)?;
+    Ok(())
 }
 
 fn prefix_search_terms(text: &str) -> String {
@@ -263,173 +307,185 @@ mod tests {
         std::env::temp_dir().join(format!("rayon-tantivy-test-{nanos}-{unique_id}"))
     }
 
-    fn test_index() -> TantivyAppIndex {
-        TantivyAppIndex::open_or_create(unique_index_path()).unwrap()
+    fn test_index() -> TantivySearchIndex {
+        TantivySearchIndex::open_or_create(unique_index_path()).unwrap()
     }
 
-    fn installed_app(
+    fn searchable_item(
         id: &str,
+        kind: SearchResultKind,
         title: &str,
-        bundle_identifier: Option<&str>,
-        path: &str,
-    ) -> InstalledApp {
-        InstalledApp {
+        subtitle: Option<&str>,
+        owner_plugin_id: Option<&str>,
+        search_text: &str,
+    ) -> SearchableItemDocument {
+        SearchableItemDocument {
             id: CommandId::from(id),
+            kind,
             title: title.into(),
-            bundle_identifier: bundle_identifier.map(str::to_string),
-            path: path.into(),
+            subtitle: subtitle.map(str::to_string),
+            owner_plugin_id: owner_plugin_id.map(str::to_string),
+            search_text: search_text.into(),
         }
     }
 
     #[test]
-    fn search_is_empty_for_blank_query() {
+    fn search_is_empty_for_blank_query_without_docs() {
         let index = test_index();
-
-        let results = index.search_app_ids("   ", 10).unwrap();
-
+        let results = index.search_item_ids("", 10).unwrap();
         assert!(results.is_empty());
     }
 
     #[test]
     fn search_matches_two_character_title_prefix() {
         let index = test_index();
-        let apps = vec![
-            installed_app(
+        index
+            .replace_items(&[searchable_item(
+                "command:hello",
+                SearchResultKind::Command,
+                "Hello",
+                None,
+                Some("builtin.hello"),
+                "hello greeting",
+            )])
+            .unwrap();
+
+        let results = index.search_item_ids("he", 10).unwrap();
+        assert_eq!(results, vec![String::from("command:hello")]);
+    }
+
+    #[test]
+    fn search_matches_owner_prefix() {
+        let index = test_index();
+        index
+            .replace_items(&[searchable_item(
+                "command:hello",
+                SearchResultKind::Command,
+                "Hello",
+                None,
+                Some("user.commands"),
+                "hello greeting",
+            )])
+            .unwrap();
+
+        let results = index.search_item_ids("user", 10).unwrap();
+        assert_eq!(results, vec![String::from("command:hello")]);
+    }
+
+    #[test]
+    fn search_matches_application_metadata() {
+        let index = test_index();
+        index
+            .replace_items(&[searchable_item(
                 "app:macos:com.example.arc",
+                SearchResultKind::Application,
                 "Arc",
                 Some("com.example.arc"),
-                "/Applications/Arc.app",
-            ),
-            installed_app(
-                "app:macos:com.example.notes",
-                "Notes",
-                Some("com.apple.Notes"),
-                "/System/Applications/Notes.app",
-            ),
-        ];
+                None,
+                "Arc com.example.arc",
+            )])
+            .unwrap();
 
-        let stats = index.reindex_apps(&apps).unwrap();
-        let results = index.search_app_ids("ar", 10).unwrap();
-
-        assert_eq!(
-            stats,
-            AppIndexStats {
-                discovered_count: 2,
-                indexed_count: 2,
-                skipped_count: 0,
-            }
-        );
-        assert_eq!(results, vec!["app:macos:com.example.arc"]);
+        let results = index.search_item_ids("arc", 10).unwrap();
+        assert_eq!(results, vec![String::from("app:macos:com.example.arc")]);
     }
 
     #[test]
-    fn search_matches_three_character_title_prefix() {
+    fn blank_query_returns_ranked_documents() {
         let index = test_index();
-        let apps = vec![installed_app(
-            "app:macos:com.example.safari",
-            "Safari",
-            Some("com.apple.Safari"),
-            "/Applications/Safari.app",
-        )];
+        index
+            .replace_items(&[searchable_item(
+                "command:hello",
+                SearchResultKind::Command,
+                "Hello",
+                None,
+                Some("builtin.hello"),
+                "hello greeting",
+            )])
+            .unwrap();
 
-        index.reindex_apps(&apps).unwrap();
-
-        let results = index.search_app_ids("saf", 10).unwrap();
-
-        assert_eq!(results, vec!["app:macos:com.example.safari"]);
-    }
-
-    #[test]
-    fn search_matches_bundle_identifier_prefix() {
-        let index = test_index();
-        let apps = vec![installed_app(
-            "app:macos:com.example.arc",
-            "Browser",
-            Some("com.example.arc"),
-            "/Applications/Arc.app",
-        )];
-
-        index.reindex_apps(&apps).unwrap();
-
-        let results = index.search_app_ids("exa", 10).unwrap();
-
-        assert_eq!(results, vec!["app:macos:com.example.arc"]);
-    }
-
-    #[test]
-    fn search_does_not_match_non_prefix_substrings() {
-        let index = test_index();
-        let apps = vec![installed_app(
-            "app:macos:com.example.safari",
-            "Safari",
-            Some("com.apple.Safari"),
-            "/Applications/Safari.app",
-        )];
-
-        index.reindex_apps(&apps).unwrap();
-
-        assert!(index.search_app_ids("far", 10).unwrap().is_empty());
+        let results = index.search_item_ids("", 10).unwrap();
+        assert_eq!(results, vec![String::from("command:hello")]);
     }
 
     #[test]
     fn reindex_replaces_stale_documents() {
         let index = test_index();
-        let old_apps = vec![installed_app(
-            "app:macos:com.example.arc",
-            "Arc",
-            Some("com.example.arc"),
-            "/Applications/Arc.app",
-        )];
-        let new_apps = vec![installed_app(
-            "app:macos:com.example.notes",
-            "Notes",
-            Some("com.apple.Notes"),
-            "/System/Applications/Notes.app",
-        )];
+        index
+            .replace_items(&[searchable_item(
+                "stale",
+                SearchResultKind::Command,
+                "Stale",
+                None,
+                None,
+                "stale",
+            )])
+            .unwrap();
+        index
+            .replace_items(&[searchable_item(
+                "fresh",
+                SearchResultKind::Command,
+                "Fresh",
+                None,
+                None,
+                "fresh",
+            )])
+            .unwrap();
 
-        index.reindex_apps(&old_apps).unwrap();
-        index.reindex_apps(&new_apps).unwrap();
-
-        assert!(index.search_app_ids("ar", 10).unwrap().is_empty());
-        assert_eq!(
-            index.search_app_ids("no", 10).unwrap(),
-            vec!["app:macos:com.example.notes"]
-        );
+        let results = index.search_item_ids("stale", 10).unwrap();
+        assert!(results.is_empty());
+        let fresh_results = index.search_item_ids("fresh", 10).unwrap();
+        assert_eq!(fresh_results, vec![String::from("fresh")]);
     }
 
     #[test]
     fn persists_index_on_disk() {
         let path = unique_index_path();
-        let index = TantivyAppIndex::open_or_create(&path).unwrap();
-        let apps = vec![installed_app(
-            "app:macos:com.example.arc",
-            "Arc",
-            Some("com.example.arc"),
-            "/Applications/Arc.app",
-        )];
+        let index = TantivySearchIndex::open_or_create(&path).unwrap();
+        index
+            .replace_items(&[searchable_item(
+                "persisted",
+                SearchResultKind::Command,
+                "Persisted",
+                None,
+                None,
+                "persisted",
+            )])
+            .unwrap();
 
-        index.reindex_apps(&apps).unwrap();
-        assert_eq!(index.path(), path.as_path());
-        drop(index);
-
-        let reopened = TantivyAppIndex::open_or_create(&path).unwrap();
-
-        assert_eq!(
-            reopened.search_app_ids("ar", 10).unwrap(),
-            vec!["app:macos:com.example.arc"]
-        );
+        let reopened = TantivySearchIndex::open_or_create(&path).unwrap();
+        let results = reopened.search_item_ids("persisted", 10).unwrap();
+        assert_eq!(results, vec![String::from("persisted")]);
     }
 
     #[test]
-    fn prefix_search_terms_indexes_word_prefixes() {
-        assert_eq!(prefix_search_terms("Safari"), "sa saf safa safar safari");
-        assert_eq!(
-            prefix_search_terms("Google Chrome"),
-            "ch chr chro chrom chrome go goo goog googl google"
-        );
-        assert_eq!(
-            prefix_search_terms("com.apple.Notes"),
-            "ap app appl apple co com no not note notes"
-        );
+    fn recreates_index_when_schema_changes() {
+        let path = unique_index_path();
+        fs::create_dir_all(&path).unwrap();
+
+        let mut schema_builder = Schema::builder();
+        schema_builder.add_text_field("legacy_id", STRING | STORED);
+        let legacy_schema = schema_builder.build();
+        let directory = MmapDirectory::open(&path).unwrap();
+        let legacy_index = Index::open_or_create(directory, legacy_schema).unwrap();
+        let mut writer = legacy_index
+            .writer::<TantivyDocument>(INDEX_WRITER_HEAP_BYTES)
+            .unwrap();
+        writer.commit().unwrap();
+
+        let reopened = TantivySearchIndex::open_or_create(&path).unwrap();
+        reopened
+            .replace_items(&[searchable_item(
+                "fresh",
+                SearchResultKind::Command,
+                "Fresh",
+                None,
+                None,
+                "fresh",
+            )])
+            .unwrap();
+
+        let results = reopened.search_item_ids("fresh", 10).unwrap();
+        assert_eq!(results, vec![String::from("fresh")]);
     }
 }

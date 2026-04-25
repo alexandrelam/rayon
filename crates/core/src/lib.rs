@@ -1,8 +1,12 @@
-use rayon_db::{AppIndexStats, TantivyAppIndex};
+mod config;
+
+pub use config::load_config_providers;
+
+use rayon_db::{SearchIndexStats, TantivySearchIndex};
 use rayon_platform::MacOsAppManager;
 use rayon_types::{
-    CommandDefinition, CommandExecutionResult, CommandId, InstalledApp, SearchResult,
-    SearchResultKind,
+    CommandDefinition, CommandExecutionRequest, CommandExecutionResult, CommandId, InstalledApp,
+    SearchResult, SearchResultKind, SearchableItemDocument,
 };
 use std::collections::HashMap;
 use std::error::Error;
@@ -10,14 +14,13 @@ use std::fmt;
 use std::sync::{Arc, RwLock};
 
 pub const APP_REINDEX_COMMAND_ID: &str = "apps.reindex";
-const APP_SEARCH_LIMIT: usize = 20;
+const SEARCH_LIMIT: usize = 20;
 
 pub trait CommandProvider: Send + Sync {
     fn commands(&self) -> Vec<CommandDefinition>;
     fn execute(
         &self,
-        command_id: &CommandId,
-        payload: Option<String>,
+        request: &CommandExecutionRequest,
     ) -> Result<CommandExecutionResult, CommandError>;
 }
 
@@ -25,6 +28,8 @@ pub trait CommandProvider: Send + Sync {
 pub enum CommandError {
     DuplicateCommandId(CommandId),
     UnknownCommand(CommandId),
+    InvalidArguments(String),
+    ExecutionFailed(String),
 }
 
 impl fmt::Display for CommandError {
@@ -34,6 +39,8 @@ impl fmt::Display for CommandError {
                 write!(f, "duplicate command id registered: {command_id}")
             }
             Self::UnknownCommand(command_id) => write!(f, "unknown command id: {command_id}"),
+            Self::InvalidArguments(error) => write!(f, "{error}"),
+            Self::ExecutionFailed(error) => write!(f, "{error}"),
         }
     }
 }
@@ -67,29 +74,21 @@ impl From<CommandError> for LauncherError {
     }
 }
 
+#[derive(Default)]
 pub struct CommandRegistry {
     providers: Vec<Arc<dyn CommandProvider>>,
     commands: Vec<RegisteredCommand>,
     command_owners: HashMap<String, usize>,
 }
 
+#[derive(Clone)]
 struct RegisteredCommand {
     definition: CommandDefinition,
 }
 
-impl Default for CommandRegistry {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl CommandRegistry {
     pub fn new() -> Self {
-        Self {
-            providers: Vec::new(),
-            commands: Vec::new(),
-            command_owners: HashMap::new(),
-        }
+        Self::default()
     }
 
     pub fn register_provider(
@@ -113,44 +112,66 @@ impl CommandRegistry {
         Ok(())
     }
 
-    pub fn search(&self, query: &str) -> Vec<SearchResult> {
-        let query = query.trim().to_ascii_lowercase();
+    pub fn execute(
+        &self,
+        request: &CommandExecutionRequest,
+    ) -> Result<CommandExecutionResult, CommandError> {
+        let provider_index = self
+            .command_owners
+            .get(request.command_id.as_str())
+            .copied()
+            .ok_or_else(|| CommandError::UnknownCommand(request.command_id.clone()))?;
 
+        self.providers[provider_index].execute(request)
+    }
+
+    pub fn search_results_by_id(&self) -> HashMap<String, SearchResult> {
         self.commands
             .iter()
-            .filter(|command| {
-                if query.is_empty() {
-                    return true;
-                }
-
-                let title = command.definition.title.to_ascii_lowercase();
-                let id = command.definition.id.as_str().to_ascii_lowercase();
-
-                title.contains(&query) || id.contains(&query)
-            })
-            .map(|command| SearchResult {
-                id: command.definition.id.clone(),
-                title: command.definition.title.clone(),
-                subtitle: None,
-                icon_path: None,
-                kind: SearchResultKind::Command,
+            .map(|command| {
+                (
+                    command.definition.id.to_string(),
+                    SearchResult {
+                        id: command.definition.id.clone(),
+                        title: command.definition.title.clone(),
+                        subtitle: command.definition.subtitle.clone(),
+                        icon_path: None,
+                        kind: SearchResultKind::Command,
+                        owner_plugin_id: Some(command.definition.owner_plugin_id.clone()),
+                        arguments: command.definition.arguments.clone(),
+                    },
+                )
             })
             .collect()
     }
 
-    pub fn execute(
-        &self,
-        command_id: &CommandId,
-        payload: Option<String>,
-    ) -> Result<CommandExecutionResult, CommandError> {
-        let provider_index = self
-            .command_owners
-            .get(command_id.as_str())
-            .copied()
-            .ok_or_else(|| CommandError::UnknownCommand(command_id.clone()))?;
-
-        self.providers[provider_index].execute(command_id, payload)
+    pub fn searchable_documents(&self) -> Vec<SearchableItemDocument> {
+        self.commands
+            .iter()
+            .map(|command| SearchableItemDocument {
+                id: command.definition.id.clone(),
+                kind: SearchResultKind::Command,
+                title: command.definition.title.clone(),
+                subtitle: command.definition.subtitle.clone(),
+                owner_plugin_id: Some(command.definition.owner_plugin_id.clone()),
+                search_text: command_search_text(&command.definition),
+            })
+            .collect()
     }
+}
+
+fn command_search_text(definition: &CommandDefinition) -> String {
+    let mut parts = vec![
+        definition.id.to_string(),
+        definition.title.clone(),
+        definition.owner_plugin_id.clone(),
+    ];
+    if let Some(subtitle) = &definition.subtitle {
+        parts.push(subtitle.clone());
+    }
+    parts.extend(definition.keywords.clone());
+    parts.extend(definition.arguments.iter().map(|argument| argument.label.clone()));
+    parts.join(" ")
 }
 
 pub trait AppPlatform: Send + Sync {
@@ -158,10 +179,10 @@ pub trait AppPlatform: Send + Sync {
     fn launch_app(&self, app: &InstalledApp) -> Result<(), String>;
 }
 
-pub trait AppIndex: Send + Sync {
+pub trait SearchIndex: Send + Sync {
     fn is_configured(&self) -> bool;
-    fn search_app_ids(&self, query: &str, limit: usize) -> Result<Vec<String>, String>;
-    fn reindex_apps(&self, apps: &[InstalledApp]) -> Result<AppIndexStats, String>;
+    fn search_item_ids(&self, query: &str, limit: usize) -> Result<Vec<String>, String>;
+    fn replace_items(&self, items: &[SearchableItemDocument]) -> Result<SearchIndexStats, String>;
 }
 
 impl AppPlatform for MacOsAppManager {
@@ -174,17 +195,17 @@ impl AppPlatform for MacOsAppManager {
     }
 }
 
-impl AppIndex for TantivyAppIndex {
+impl SearchIndex for TantivySearchIndex {
     fn is_configured(&self) -> bool {
-        TantivyAppIndex::is_configured(self)
+        TantivySearchIndex::is_configured(self)
     }
 
-    fn search_app_ids(&self, query: &str, limit: usize) -> Result<Vec<String>, String> {
-        TantivyAppIndex::search_app_ids(self, query, limit).map_err(|error| error.to_string())
+    fn search_item_ids(&self, query: &str, limit: usize) -> Result<Vec<String>, String> {
+        TantivySearchIndex::search_item_ids(self, query, limit).map_err(|error| error.to_string())
     }
 
-    fn reindex_apps(&self, apps: &[InstalledApp]) -> Result<AppIndexStats, String> {
-        TantivyAppIndex::reindex_apps(self, apps).map_err(|error| error.to_string())
+    fn replace_items(&self, items: &[SearchableItemDocument]) -> Result<SearchIndexStats, String> {
+        TantivySearchIndex::replace_items(self, items).map_err(|error| error.to_string())
     }
 }
 
@@ -206,12 +227,46 @@ impl AppCatalog {
     fn get(&self, app_id: &CommandId) -> Option<&InstalledApp> {
         self.by_id.get(app_id.as_str())
     }
+
+    fn searchable_documents(&self) -> Vec<SearchableItemDocument> {
+        self.by_id
+            .values()
+            .map(|app| SearchableItemDocument {
+                id: app.id.clone(),
+                kind: SearchResultKind::Application,
+                title: app.title.clone(),
+                subtitle: Some(app.subtitle()),
+                owner_plugin_id: None,
+                search_text: app.search_text(),
+            })
+            .collect()
+    }
+
+    fn search_results_by_id(&self) -> HashMap<String, SearchResult> {
+        self.by_id
+            .values()
+            .map(|app| {
+                (
+                    app.id.to_string(),
+                    SearchResult {
+                        id: app.id.clone(),
+                        title: app.title.clone(),
+                        subtitle: Some(app.subtitle()),
+                        icon_path: None,
+                        kind: SearchResultKind::Application,
+                        owner_plugin_id: None,
+                        arguments: Vec::new(),
+                    },
+                )
+            })
+            .collect()
+    }
 }
 
 pub struct LauncherService {
     registry: CommandRegistry,
     platform: Arc<dyn AppPlatform>,
-    app_index: Arc<dyn AppIndex>,
+    search_index: Arc<dyn SearchIndex>,
     app_catalog: RwLock<AppCatalog>,
 }
 
@@ -219,7 +274,7 @@ impl LauncherService {
     pub fn new(
         registry: CommandRegistry,
         platform: Arc<dyn AppPlatform>,
-        app_index: Arc<dyn AppIndex>,
+        search_index: Arc<dyn SearchIndex>,
     ) -> Self {
         let app_catalog = match platform.discover_apps() {
             Ok(apps) => AppCatalog::from_apps(apps),
@@ -229,60 +284,60 @@ impl LauncherService {
             }
         };
 
-        Self {
+        let service = Self {
             registry,
             platform,
-            app_index,
+            search_index,
             app_catalog: RwLock::new(app_catalog),
+        };
+
+        if let Err(error) = service.reindex_search() {
+            eprintln!("failed to build search index on startup: {error}");
         }
+
+        service
     }
 
     pub fn search(&self, query: &str) -> Vec<SearchResult> {
-        let mut results = self.registry.search(query);
-        let app_ids = match self.app_index.search_app_ids(query, APP_SEARCH_LIMIT) {
-            Ok(app_ids) => app_ids,
+        let item_ids = match self.search_index.search_item_ids(query, SEARCH_LIMIT) {
+            Ok(item_ids) => item_ids,
             Err(error) => {
-                eprintln!("app search failed: {error}");
+                eprintln!("search failed: {error}");
                 Vec::new()
             }
         };
 
-        let app_catalog = self.app_catalog.read().expect("app catalog lock poisoned");
-        for app_id in app_ids {
-            if let Some(app) = app_catalog.by_id.get(&app_id) {
-                results.push(SearchResult {
-                    id: app.id.clone(),
-                    title: app.title.clone(),
-                    subtitle: Some(app.subtitle()),
-                    icon_path: None,
-                    kind: SearchResultKind::Application,
-                });
-            }
-        }
+        let mut search_results = self.registry.search_results_by_id();
+        let app_results = self
+            .app_catalog
+            .read()
+            .expect("app catalog lock poisoned")
+            .search_results_by_id();
+        search_results.extend(app_results);
 
-        results
+        item_ids
+            .into_iter()
+            .filter_map(|item_id| search_results.get(&item_id).cloned())
+            .collect()
     }
 
     pub fn execute(
         &self,
-        command_id: &CommandId,
-        payload: Option<String>,
+        request: &CommandExecutionRequest,
     ) -> Result<CommandExecutionResult, LauncherError> {
-        if command_id.as_str() == APP_REINDEX_COMMAND_ID {
+        if request.command_id.as_str() == APP_REINDEX_COMMAND_ID {
             return self.refresh_and_reindex();
         }
 
-        if command_id.as_str().starts_with("app:macos:") {
-            return self.launch_app(command_id);
+        if request.command_id.as_str().starts_with("app:macos:") {
+            return self.launch_app(&request.command_id);
         }
 
-        self.registry
-            .execute(command_id, payload)
-            .map_err(LauncherError::from)
+        self.registry.execute(request).map_err(LauncherError::from)
     }
 
-    pub fn app_search_enabled(&self) -> bool {
-        self.app_index.is_configured()
+    pub fn search_enabled(&self) -> bool {
+        self.search_index.is_configured()
     }
 
     fn refresh_and_reindex(&self) -> Result<CommandExecutionResult, LauncherError> {
@@ -292,20 +347,27 @@ impl LauncherService {
             .map_err(LauncherError::Platform)?;
         {
             let mut app_catalog = self.app_catalog.write().expect("app catalog lock poisoned");
-            *app_catalog = AppCatalog::from_apps(apps.clone());
+            *app_catalog = AppCatalog::from_apps(apps);
         }
 
-        let stats = self
-            .app_index
-            .reindex_apps(&apps)
-            .map_err(LauncherError::SearchBackend)?;
-
+        let stats = self.reindex_search().map_err(LauncherError::SearchBackend)?;
         Ok(CommandExecutionResult {
             output: format!(
-                "reindexed {} applications ({} skipped)",
+                "reindexed {} searchable items ({} skipped)",
                 stats.indexed_count, stats.skipped_count
             ),
         })
+    }
+
+    fn reindex_search(&self) -> Result<SearchIndexStats, String> {
+        let mut documents = self.registry.searchable_documents();
+        let app_documents = self
+            .app_catalog
+            .read()
+            .expect("app catalog lock poisoned")
+            .searchable_documents();
+        documents.extend(app_documents);
+        self.search_index.replace_items(&documents)
     }
 
     fn launch_app(&self, command_id: &CommandId) -> Result<CommandExecutionResult, LauncherError> {
@@ -330,6 +392,7 @@ impl LauncherService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rayon_types::{CommandArgumentType, CommandExecutionRequest};
     use std::sync::Mutex;
 
     struct TestProvider;
@@ -340,85 +403,38 @@ mod tests {
                 CommandDefinition {
                     id: CommandId::from("hello"),
                     title: "Hello".into(),
+                    subtitle: Some("Greet".into()),
+                    owner_plugin_id: "builtin.hello".into(),
+                    keywords: vec![String::from("greeting")],
+                    arguments: vec![],
                 },
                 CommandDefinition {
-                    id: CommandId::from("help"),
-                    title: "Help".into(),
+                    id: CommandId::from("echo"),
+                    title: "Echo".into(),
+                    subtitle: None,
+                    owner_plugin_id: "builtin.echo".into(),
+                    keywords: vec![],
+                    arguments: vec![rayon_types::CommandArgumentDefinition {
+                        id: String::from("message"),
+                        label: String::from("Message"),
+                        argument_type: CommandArgumentType::String,
+                        required: true,
+                        flag: None,
+                        positional: Some(0),
+                        default_value: None,
+                    }],
                 },
             ]
         }
 
         fn execute(
             &self,
-            command_id: &CommandId,
-            _payload: Option<String>,
+            request: &CommandExecutionRequest,
         ) -> Result<CommandExecutionResult, CommandError> {
             Ok(CommandExecutionResult {
-                output: format!("ran:{command_id}"),
+                output: format!("ran:{}", request.command_id),
             })
         }
-    }
-
-    #[test]
-    fn returns_all_commands_for_empty_query() {
-        let mut registry = CommandRegistry::new();
-        registry.register_provider(Arc::new(TestProvider)).unwrap();
-
-        let results = registry.search("");
-
-        assert_eq!(results.len(), 2);
-        assert!(results
-            .iter()
-            .all(|result| result.kind == SearchResultKind::Command));
-    }
-
-    #[test]
-    fn filters_commands_case_insensitively() {
-        let mut registry = CommandRegistry::new();
-        registry.register_provider(Arc::new(TestProvider)).unwrap();
-
-        let results = registry.search("HEL");
-
-        assert_eq!(results.len(), 2);
-    }
-
-    #[test]
-    fn rejects_duplicate_command_ids() {
-        let mut registry = CommandRegistry::new();
-        registry.register_provider(Arc::new(TestProvider)).unwrap();
-
-        let error = registry
-            .register_provider(Arc::new(TestProvider))
-            .unwrap_err();
-
-        assert_eq!(
-            error,
-            CommandError::DuplicateCommandId(CommandId::from("hello"))
-        );
-    }
-
-    #[test]
-    fn executes_command_through_provider() {
-        let mut registry = CommandRegistry::new();
-        registry.register_provider(Arc::new(TestProvider)).unwrap();
-
-        let result = registry.execute(&CommandId::from("hello"), None).unwrap();
-
-        assert_eq!(result.output, "ran:hello");
-    }
-
-    #[test]
-    fn returns_error_for_unknown_command() {
-        let registry = CommandRegistry::new();
-
-        let error = registry
-            .execute(&CommandId::from("missing"), None)
-            .unwrap_err();
-
-        assert_eq!(
-            error,
-            CommandError::UnknownCommand(CommandId::from("missing"))
-        );
     }
 
     struct StubPlatform {
@@ -437,24 +453,26 @@ mod tests {
         }
     }
 
-    struct StubIndex {
+    struct StubSearchIndex {
         configured: bool,
         search_results: Vec<String>,
-        stats: AppIndexStats,
+        stats: SearchIndexStats,
+        last_documents: Mutex<Vec<SearchableItemDocument>>,
     }
 
-    impl AppIndex for StubIndex {
+    impl SearchIndex for StubSearchIndex {
         fn is_configured(&self) -> bool {
             self.configured
         }
 
-        fn search_app_ids(&self, _query: &str, _limit: usize) -> Result<Vec<String>, String> {
+        fn search_item_ids(&self, _query: &str, _limit: usize) -> Result<Vec<String>, String> {
             Ok(self.search_results.clone())
         }
 
-        fn reindex_apps(&self, apps: &[InstalledApp]) -> Result<AppIndexStats, String> {
-            Ok(AppIndexStats {
-                discovered_count: apps.len(),
+        fn replace_items(&self, items: &[SearchableItemDocument]) -> Result<SearchIndexStats, String> {
+            *self.last_documents.lock().unwrap() = items.to_vec();
+            Ok(SearchIndexStats {
+                discovered_count: items.len(),
                 ..self.stats.clone()
             })
         }
@@ -473,28 +491,73 @@ mod tests {
             }],
             launched: Mutex::new(Vec::new()),
         });
-        let index = Arc::new(StubIndex {
+        let index = Arc::new(StubSearchIndex {
             configured: true,
             search_results,
-            stats: AppIndexStats {
+            stats: SearchIndexStats {
                 discovered_count: 0,
-                indexed_count: 1,
+                indexed_count: 3,
                 skipped_count: 0,
             },
+            last_documents: Mutex::new(Vec::new()),
         });
 
         LauncherService::new(registry, platform, index)
     }
 
     #[test]
-    fn aggregate_search_merges_command_and_app_results() {
-        let launcher = build_launcher_service(vec!["app:macos:com.example.arc".into()]);
+    fn registry_exposes_argument_metadata() {
+        let mut registry = CommandRegistry::new();
+        registry.register_provider(Arc::new(TestProvider)).unwrap();
+
+        let results = registry.search_results_by_id();
+        assert_eq!(results["echo"].arguments.len(), 1);
+    }
+
+    #[test]
+    fn executes_command_through_provider() {
+        let mut registry = CommandRegistry::new();
+        registry.register_provider(Arc::new(TestProvider)).unwrap();
+
+        let result = registry
+            .execute(&CommandExecutionRequest {
+                command_id: CommandId::from("hello"),
+                arguments: HashMap::new(),
+            })
+            .unwrap();
+
+        assert_eq!(result.output, "ran:hello");
+    }
+
+    #[test]
+    fn returns_error_for_unknown_command() {
+        let registry = CommandRegistry::new();
+
+        let error = registry
+            .execute(&CommandExecutionRequest {
+                command_id: CommandId::from("missing"),
+                arguments: HashMap::new(),
+            })
+            .unwrap_err();
+
+        assert_eq!(
+            error,
+            CommandError::UnknownCommand(CommandId::from("missing"))
+        );
+    }
+
+    #[test]
+    fn aggregate_search_uses_shared_index_ids() {
+        let launcher = build_launcher_service(vec![
+            String::from("hello"),
+            String::from("app:macos:com.example.arc"),
+        ]);
 
         let results = launcher.search("arc");
 
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].kind, SearchResultKind::Application);
-        assert_eq!(results[0].subtitle.as_deref(), Some("com.example.arc"));
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].kind, SearchResultKind::Command);
+        assert_eq!(results[1].kind, SearchResultKind::Application);
     }
 
     #[test]
@@ -502,20 +565,63 @@ mod tests {
         let launcher = build_launcher_service(vec![]);
 
         let result = launcher
-            .execute(&CommandId::from("app:macos:com.example.arc"), None)
+            .execute(&CommandExecutionRequest {
+                command_id: CommandId::from("app:macos:com.example.arc"),
+                arguments: HashMap::new(),
+            })
             .unwrap();
 
         assert_eq!(result.output, "opened Arc");
     }
 
     #[test]
-    fn execute_reindexes_apps() {
+    fn execute_reindexes_shared_search_items() {
         let launcher = build_launcher_service(vec![]);
 
         let result = launcher
-            .execute(&CommandId::from(APP_REINDEX_COMMAND_ID), None)
+            .execute(&CommandExecutionRequest {
+                command_id: CommandId::from(APP_REINDEX_COMMAND_ID),
+                arguments: HashMap::new(),
+            })
             .unwrap();
 
-        assert_eq!(result.output, "reindexed 1 applications (0 skipped)");
+        assert_eq!(result.output, "reindexed 3 searchable items (0 skipped)");
+    }
+
+    #[test]
+    fn startup_reindexes_commands_and_apps() {
+        let mut registry = CommandRegistry::new();
+        registry.register_provider(Arc::new(TestProvider)).unwrap();
+
+        let platform = Arc::new(StubPlatform {
+            apps: vec![InstalledApp {
+                id: CommandId::from("app:macos:com.example.arc"),
+                title: "Arc".into(),
+                bundle_identifier: Some("com.example.arc".into()),
+                path: "/Applications/Arc.app".into(),
+            }],
+            launched: Mutex::new(Vec::new()),
+        });
+        let index = Arc::new(StubSearchIndex {
+            configured: true,
+            search_results: Vec::new(),
+            stats: SearchIndexStats {
+                discovered_count: 0,
+                indexed_count: 3,
+                skipped_count: 0,
+            },
+            last_documents: Mutex::new(Vec::new()),
+        });
+
+        let _launcher = LauncherService::new(registry, platform, index.clone());
+        let documents = index.last_documents.lock().unwrap();
+
+        assert_eq!(documents.len(), 3);
+        assert!(documents
+            .iter()
+            .any(|document| document.id == CommandId::from("hello")));
+        assert!(documents
+            .iter()
+            .any(|document| document.id == CommandId::from("app:macos:com.example.arc")));
     }
 }

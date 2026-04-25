@@ -3183,6 +3183,8 @@ dependencies = [
  "rayon-db",
  "rayon-platform",
  "rayon-types",
+ "serde",
+ "toml 0.8.2",
 ]
 
 [[package]]

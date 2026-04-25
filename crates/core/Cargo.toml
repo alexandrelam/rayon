@@ -7,3 +7,5 @@ edition.workspace = true
 rayon-db = { path = "../db" }
 rayon-platform = { path = "../platform" }
 rayon-types = { path = "../types" }
+serde.workspace = true
+toml = "0.8"

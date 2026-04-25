@@ -1,5 +1,5 @@
 use rayon_core::{CommandError, CommandProvider, APP_REINDEX_COMMAND_ID};
-use rayon_types::{CommandDefinition, CommandExecutionResult, CommandId};
+use rayon_types::{CommandDefinition, CommandExecutionRequest, CommandExecutionResult, CommandId};
 
 pub struct MaintenanceProvider;
 
@@ -7,17 +7,20 @@ impl CommandProvider for MaintenanceProvider {
     fn commands(&self) -> Vec<CommandDefinition> {
         vec![CommandDefinition {
             id: CommandId::from(APP_REINDEX_COMMAND_ID),
-            title: "Reindex Applications".into(),
+            title: "Reindex Search".into(),
+            subtitle: Some("Refresh apps and searchable commands".into()),
+            owner_plugin_id: "builtin.maintenance".into(),
+            keywords: vec!["refresh".into(), "index".into()],
+            arguments: Vec::new(),
         }]
     }
 
     fn execute(
         &self,
-        command_id: &CommandId,
-        _payload: Option<String>,
+        request: &CommandExecutionRequest,
     ) -> Result<CommandExecutionResult, CommandError> {
-        if command_id.as_str() != APP_REINDEX_COMMAND_ID {
-            return Err(CommandError::UnknownCommand(command_id.clone()));
+        if request.command_id.as_str() != APP_REINDEX_COMMAND_ID {
+            return Err(CommandError::UnknownCommand(request.command_id.clone()));
         }
 
         Ok(CommandExecutionResult {

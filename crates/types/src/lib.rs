@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fmt;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -34,9 +35,61 @@ impl From<String> for CommandId {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandArgumentType {
+    String,
+    Boolean,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "value", rename_all = "snake_case")]
+pub enum CommandArgumentValue {
+    String(String),
+    Boolean(bool),
+}
+
+impl CommandArgumentValue {
+    pub fn as_string(&self) -> Option<&str> {
+        match self {
+            Self::String(value) => Some(value.as_str()),
+            Self::Boolean(_) => None,
+        }
+    }
+
+    pub fn as_boolean(&self) -> Option<bool> {
+        match self {
+            Self::String(_) => None,
+            Self::Boolean(value) => Some(*value),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommandArgumentDefinition {
+    pub id: String,
+    pub label: String,
+    pub argument_type: CommandArgumentType,
+    #[serde(default)]
+    pub required: bool,
+    #[serde(default)]
+    pub flag: Option<String>,
+    #[serde(default)]
+    pub positional: Option<usize>,
+    #[serde(default)]
+    pub default_value: Option<CommandArgumentValue>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommandDefinition {
     pub id: CommandId,
     pub title: String,
+    #[serde(default)]
+    pub subtitle: Option<String>,
+    pub owner_plugin_id: String,
+    #[serde(default)]
+    pub keywords: Vec<String>,
+    #[serde(default)]
+    pub arguments: Vec<CommandArgumentDefinition>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -46,6 +99,16 @@ pub struct SearchResult {
     pub subtitle: Option<String>,
     pub icon_path: Option<String>,
     pub kind: SearchResultKind,
+    pub owner_plugin_id: Option<String>,
+    #[serde(default)]
+    pub arguments: Vec<CommandArgumentDefinition>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommandExecutionRequest {
+    pub command_id: CommandId,
+    #[serde(default)]
+    pub arguments: HashMap<String, CommandArgumentValue>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -90,4 +153,14 @@ impl InstalledApp {
 
         parts.join(" ")
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SearchableItemDocument {
+    pub id: CommandId,
+    pub kind: SearchResultKind,
+    pub title: String,
+    pub subtitle: Option<String>,
+    pub owner_plugin_id: Option<String>,
+    pub search_text: String,
 }

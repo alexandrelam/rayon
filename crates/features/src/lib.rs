@@ -15,7 +15,8 @@ pub fn built_in_providers() -> Vec<Arc<dyn CommandProvider>> {
 mod tests {
     use super::*;
     use rayon_core::CommandRegistry;
-    use rayon_types::CommandId;
+    use rayon_types::{CommandExecutionRequest, CommandId};
+    use std::collections::HashMap;
 
     #[test]
     fn hello_provider_registers_and_executes() {
@@ -24,10 +25,15 @@ mod tests {
             registry.register_provider(provider).unwrap();
         }
 
-        let results = registry.search("hello");
-        assert_eq!(results.len(), 1);
+        let results = registry.search_results_by_id();
+        assert!(results.contains_key("hello"));
 
-        let execution = registry.execute(&CommandId::from("hello"), None).unwrap();
+        let execution = registry
+            .execute(&CommandExecutionRequest {
+                command_id: CommandId::from("hello"),
+                arguments: HashMap::new(),
+            })
+            .unwrap();
         assert_eq!(execution.output, "hello");
     }
 
@@ -38,9 +44,8 @@ mod tests {
             registry.register_provider(provider).unwrap();
         }
 
-        let results = registry.search("reindex");
+        let results = registry.search_results_by_id();
 
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].id, CommandId::from("apps.reindex"));
+        assert_eq!(results["apps.reindex"].id, CommandId::from("apps.reindex"));
     }
 }
