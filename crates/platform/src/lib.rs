@@ -53,6 +53,19 @@ impl MacOsAppManager {
         }
     }
 
+    pub fn open_url(&self, url: &str) -> Result<(), String> {
+        let status = Command::new("/usr/bin/open")
+            .arg(url)
+            .status()
+            .map_err(|error| format!("failed to open {url}: {error}"))?;
+
+        if status.success() {
+            Ok(())
+        } else {
+            Err(format!("failed to open {url}"))
+        }
+    }
+
     fn spotlight_candidates(&self) -> Result<Vec<PathBuf>, String> {
         let output = Command::new("mdfind")
             .arg(r#"kMDItemContentType == "com.apple.application-bundle""#)

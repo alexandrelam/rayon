@@ -15,7 +15,7 @@ export type SearchResult = {
   title: string;
   subtitle: string | null;
   icon_path: string | null;
-  kind: "command" | "application";
+  kind: "command" | "application" | "bookmark";
   owner_plugin_id: string | null;
   arguments: CommandArgumentDefinition[];
 };

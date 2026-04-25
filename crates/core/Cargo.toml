@@ -9,3 +9,4 @@ rayon-platform = { path = "../platform" }
 rayon-types = { path = "../types" }
 serde.workspace = true
 toml = "0.8"
+url.workspace = true

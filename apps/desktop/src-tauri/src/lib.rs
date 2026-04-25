@@ -4,7 +4,7 @@ use tauri::{
     AppHandle, Emitter, Manager, WindowEvent,
 };
 
-use rayon_core::{load_config_providers, CommandRegistry, LauncherService};
+use rayon_core::{load_config, CommandRegistry, LauncherService};
 use rayon_db::TantivySearchIndex;
 use rayon_features::built_in_providers;
 use rayon_platform::MacOsAppManager;
@@ -22,6 +22,7 @@ struct AppState {
 impl AppState {
     fn new(app: &AppHandle) -> Result<Self, String> {
         let mut registry = CommandRegistry::new();
+        let loaded_config = load_config().map_err(|error| error.to_string())?;
 
         for provider in built_in_providers() {
             registry
@@ -29,11 +30,12 @@ impl AppState {
                 .map_err(|error| format!("failed to register built-in provider: {error}"))?;
         }
 
-        for provider in load_config_providers().map_err(|error| error.to_string())? {
+        for provider in loaded_config.command_providers {
             registry
                 .register_provider(provider)
                 .map_err(|error| error.to_string())?;
         }
+        validate_bookmark_ids(&registry, &loaded_config.bookmarks)?;
 
         let app_index = Arc::new(
             TantivySearchIndex::open_or_create(app_search_index_path(app)?)
@@ -42,9 +44,26 @@ impl AppState {
         let platform = Arc::new(MacOsAppManager);
 
         Ok(Self {
-            launcher: LauncherService::new(registry, platform, app_index),
+            launcher: LauncherService::new(registry, loaded_config.bookmarks, platform, app_index),
         })
     }
+}
+
+fn validate_bookmark_ids(
+    registry: &CommandRegistry,
+    bookmarks: &[rayon_types::BookmarkDefinition],
+) -> Result<(), String> {
+    let command_ids = registry.search_results_by_id();
+    for bookmark in bookmarks {
+        if command_ids.contains_key(bookmark.id.as_str()) {
+            return Err(format!(
+                "bookmark id conflicts with an existing command id: {}",
+                bookmark.id
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 fn app_search_index_path(app: &AppHandle) -> Result<PathBuf, String> {

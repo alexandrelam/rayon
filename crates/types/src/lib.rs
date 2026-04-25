@@ -93,6 +93,18 @@ pub struct CommandDefinition {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BookmarkDefinition {
+    pub id: CommandId,
+    pub title: String,
+    #[serde(default)]
+    pub subtitle: Option<String>,
+    pub owner_plugin_id: String,
+    pub url: String,
+    #[serde(default)]
+    pub keywords: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SearchResult {
     pub id: CommandId,
     pub title: String,
@@ -121,6 +133,7 @@ pub struct CommandExecutionResult {
 pub enum SearchResultKind {
     Command,
     Application,
+    Bookmark,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

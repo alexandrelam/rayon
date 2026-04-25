@@ -1,32 +1,56 @@
 use crate::{CommandError, CommandProvider};
 use rayon_types::{
-    CommandArgumentDefinition, CommandArgumentType, CommandArgumentValue, CommandDefinition,
-    CommandExecutionRequest, CommandExecutionResult, CommandId,
+    BookmarkDefinition, CommandArgumentDefinition, CommandArgumentType, CommandArgumentValue,
+    CommandDefinition, CommandExecutionRequest, CommandExecutionResult, CommandId,
 };
 use serde::Deserialize;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
+use url::Url;
 
-pub fn load_config_providers() -> Result<Vec<Arc<dyn CommandProvider>>, String> {
+pub struct LoadedConfig {
+    pub command_providers: Vec<Arc<dyn CommandProvider>>,
+    pub bookmarks: Vec<BookmarkDefinition>,
+}
+
+pub fn load_config() -> Result<LoadedConfig, String> {
     let config_dir = config_dir()?;
     if !config_dir.exists() {
-        return Ok(Vec::new());
+        return Ok(LoadedConfig {
+            command_providers: Vec::new(),
+            bookmarks: Vec::new(),
+        });
     }
 
-    let mut providers: Vec<Arc<dyn CommandProvider>> = Vec::new();
+    let mut command_providers: Vec<Arc<dyn CommandProvider>> = Vec::new();
+    let mut bookmarks = Vec::new();
+    let mut bookmark_ids = HashSet::new();
     for manifest_path in manifest_paths(&config_dir)? {
         let manifest = load_manifest(&manifest_path)?;
-        providers.push(Arc::new(DeclarativeCommandProvider::from_manifest(
-            manifest_path.parent().unwrap_or(&config_dir),
-            manifest,
-        )?));
+        let LoadedManifest {
+            command_provider,
+            bookmarks: manifest_bookmarks,
+        } = LoadedManifest::from_manifest(manifest_path.parent().unwrap_or(&config_dir), manifest)?;
+
+        if !command_provider.is_empty() {
+            command_providers.push(Arc::new(command_provider));
+        }
+        for bookmark in manifest_bookmarks {
+            if !bookmark_ids.insert(bookmark.id.to_string()) {
+                return Err(format!("duplicate bookmark id registered: {}", bookmark.id));
+            }
+            bookmarks.push(bookmark);
+        }
     }
 
-    Ok(providers)
+    Ok(LoadedConfig {
+        command_providers,
+        bookmarks,
+    })
 }
 
 fn config_dir() -> Result<PathBuf, String> {
@@ -73,11 +97,25 @@ struct DeclarativeCommandProvider {
 }
 
 impl DeclarativeCommandProvider {
-    fn from_manifest(base_dir: &Path, manifest: PluginManifest) -> Result<Self, String> {
-        let mut command_definitions = Vec::with_capacity(manifest.commands.len());
-        let mut commands_by_id = HashMap::with_capacity(manifest.commands.len());
+    fn is_empty(&self) -> bool {
+        self.command_definitions.is_empty()
+    }
+}
 
-        for command in manifest.commands {
+struct LoadedManifest {
+    command_provider: DeclarativeCommandProvider,
+    bookmarks: Vec<BookmarkDefinition>,
+}
+
+impl LoadedManifest {
+    fn from_manifest(base_dir: &Path, manifest: PluginManifest) -> Result<Self, String> {
+        let commands = manifest.commands.unwrap_or_default();
+        let bookmarks = manifest.bookmarks.unwrap_or_default();
+        let mut command_definitions = Vec::with_capacity(commands.len());
+        let mut commands_by_id = HashMap::with_capacity(commands.len());
+        let mut bookmark_definitions = Vec::with_capacity(bookmarks.len());
+
+        for command in commands {
             let command_id = CommandId::from(command.id.clone());
             let definition = CommandDefinition {
                 id: command_id.clone(),
@@ -100,9 +138,24 @@ impl DeclarativeCommandProvider {
             commands_by_id.insert(command_id.to_string(), spec);
         }
 
+        for bookmark in bookmarks {
+            validate_bookmark_url(&bookmark.url)?;
+            bookmark_definitions.push(BookmarkDefinition {
+                id: CommandId::from(bookmark.id),
+                title: bookmark.title,
+                subtitle: bookmark.subtitle,
+                owner_plugin_id: manifest.plugin_id.clone(),
+                url: bookmark.url,
+                keywords: bookmark.keywords.unwrap_or_default(),
+            });
+        }
+
         Ok(Self {
-            command_definitions,
-            commands_by_id,
+            command_provider: DeclarativeCommandProvider {
+                command_definitions,
+                commands_by_id,
+            },
+            bookmarks: bookmark_definitions,
         })
     }
 }
@@ -267,10 +320,25 @@ fn resolve_path(base_dir: &Path, raw_path: &str) -> PathBuf {
     }
 }
 
+fn validate_bookmark_url(raw_url: &str) -> Result<(), String> {
+    let parsed = Url::parse(raw_url)
+        .map_err(|error| format!("invalid bookmark url '{raw_url}': {error}"))?;
+    if parsed.scheme().is_empty() {
+        return Err(format!(
+            "invalid bookmark url '{raw_url}': missing URL scheme"
+        ));
+    }
+
+    Ok(())
+}
+
 #[derive(Debug, Clone, Deserialize)]
 struct PluginManifest {
     plugin_id: String,
-    commands: Vec<ManifestCommand>,
+    #[serde(default)]
+    commands: Option<Vec<ManifestCommand>>,
+    #[serde(default)]
+    bookmarks: Option<Vec<ManifestBookmark>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -284,6 +352,15 @@ struct ManifestCommand {
     working_dir: Option<String>,
     env: Option<BTreeMap<String, String>>,
     arguments: Option<Vec<ManifestArgument>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ManifestBookmark {
+    id: String,
+    title: String,
+    subtitle: Option<String>,
+    url: String,
+    keywords: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -356,15 +433,80 @@ base_args = ["hello"]
 
         let previous = env::var_os("XDG_CONFIG_HOME");
         env::set_var("XDG_CONFIG_HOME", &config_home);
-        let providers = load_config_providers().unwrap();
+        let loaded = load_config().unwrap();
         if let Some(previous) = previous {
             env::set_var("XDG_CONFIG_HOME", previous);
         } else {
             env::remove_var("XDG_CONFIG_HOME");
         }
 
-        assert_eq!(providers.len(), 1);
-        let commands = providers[0].commands();
+        assert_eq!(loaded.command_providers.len(), 1);
+        let commands = loaded.command_providers[0].commands();
         assert_eq!(commands[0].owner_plugin_id, "user.commands");
+    }
+
+    #[test]
+    fn loads_bookmarks_from_manifest() {
+        let config_home = unique_dir();
+        let rayon_dir = config_home.join("rayon");
+        fs::create_dir_all(&rayon_dir).unwrap();
+        fs::write(
+            rayon_dir.join("bookmarks.toml"),
+            r#"
+plugin_id = "user.links"
+
+[[bookmarks]]
+id = "user.github"
+title = "GitHub"
+url = "https://github.com"
+subtitle = "Code hosting"
+keywords = ["git", "repos"]
+"#,
+        )
+        .unwrap();
+
+        let previous = env::var_os("XDG_CONFIG_HOME");
+        env::set_var("XDG_CONFIG_HOME", &config_home);
+        let loaded = load_config().unwrap();
+        if let Some(previous) = previous {
+            env::set_var("XDG_CONFIG_HOME", previous);
+        } else {
+            env::remove_var("XDG_CONFIG_HOME");
+        }
+
+        assert!(loaded.command_providers.is_empty());
+        assert_eq!(loaded.bookmarks.len(), 1);
+        assert_eq!(loaded.bookmarks[0].owner_plugin_id, "user.links");
+        assert_eq!(loaded.bookmarks[0].url, "https://github.com");
+    }
+
+    #[test]
+    fn rejects_invalid_bookmark_urls() {
+        let config_home = unique_dir();
+        let rayon_dir = config_home.join("rayon");
+        fs::create_dir_all(&rayon_dir).unwrap();
+        fs::write(
+            rayon_dir.join("invalid.toml"),
+            r#"
+plugin_id = "user.links"
+
+[[bookmarks]]
+id = "user.bad"
+title = "Bad"
+url = "github.com"
+"#,
+        )
+        .unwrap();
+
+        let previous = env::var_os("XDG_CONFIG_HOME");
+        env::set_var("XDG_CONFIG_HOME", &config_home);
+        let result = load_config();
+        if let Some(previous) = previous {
+            env::set_var("XDG_CONFIG_HOME", previous);
+        } else {
+            env::remove_var("XDG_CONFIG_HOME");
+        }
+
+        assert!(matches!(result, Err(ref error) if error.contains("invalid bookmark url")));
     }
 }

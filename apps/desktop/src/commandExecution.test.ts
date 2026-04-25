@@ -54,6 +54,15 @@ describe("commandExecution helpers", () => {
         }),
       ),
     ).toBeNull();
+
+    expect(
+      beginPendingExecution(
+        searchResult({
+          kind: "bookmark",
+          arguments: [toggleArgument],
+        }),
+      ),
+    ).toBeNull();
   });
 
   it("uses default values when rendering the active argument input", () => {

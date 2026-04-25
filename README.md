@@ -26,9 +26,12 @@ Current code is an early foundation: built-in providers are wired in statically,
 - `pnpm tauri dev`: run the desktop app
 - `cargo test`: run Rust tests across the workspace
 
-## Custom Commands
+## Configurable Commands And Bookmarks
 
-`rayon` can load user-defined commands from your config directory. See [Custom Commands](/Users/alex/Documents/rayon/docs/custom-commands.md) for the manifest format, examples, and an agent-ready setup guide for Codex or Claude Code.
+`rayon` can load user-defined commands and bookmarks from your config directory.
+
+- See [Custom Commands](/Users/alex/Documents/rayon/docs/custom-commands.md) for command manifests and the agent-oriented command prompt shape.
+- See [Bookmarks](/Users/alex/Documents/rayon/docs/bookmarks.md) for bookmark manifests and the agent-oriented bookmark prompt shape.
 
 ## macOS launcher shortcut
 

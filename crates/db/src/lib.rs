@@ -249,6 +249,7 @@ fn search_kind(kind: SearchResultKind) -> &'static str {
     match kind {
         SearchResultKind::Command => "command",
         SearchResultKind::Application => "application",
+        SearchResultKind::Bookmark => "bookmark",
     }
 }
 

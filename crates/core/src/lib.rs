@@ -1,12 +1,12 @@
 mod config;
 
-pub use config::load_config_providers;
+pub use config::{load_config, LoadedConfig};
 
 use rayon_db::{SearchIndexStats, TantivySearchIndex};
 use rayon_platform::MacOsAppManager;
 use rayon_types::{
-    CommandDefinition, CommandExecutionRequest, CommandExecutionResult, CommandId, InstalledApp,
-    SearchResult, SearchResultKind, SearchableItemDocument,
+    BookmarkDefinition, CommandDefinition, CommandExecutionRequest, CommandExecutionResult,
+    CommandId, InstalledApp, SearchResult, SearchResultKind, SearchableItemDocument,
 };
 use std::collections::HashMap;
 use std::error::Error;
@@ -182,6 +182,7 @@ fn command_search_text(definition: &CommandDefinition) -> String {
 pub trait AppPlatform: Send + Sync {
     fn discover_apps(&self) -> Result<Vec<InstalledApp>, String>;
     fn launch_app(&self, app: &InstalledApp) -> Result<(), String>;
+    fn open_url(&self, url: &str) -> Result<(), String>;
 }
 
 pub trait SearchIndex: Send + Sync {
@@ -197,6 +198,10 @@ impl AppPlatform for MacOsAppManager {
 
     fn launch_app(&self, app: &InstalledApp) -> Result<(), String> {
         MacOsAppManager::launch_app(self, app)
+    }
+
+    fn open_url(&self, url: &str) -> Result<(), String> {
+        MacOsAppManager::open_url(self, url)
     }
 }
 
@@ -268,6 +273,74 @@ impl AppCatalog {
     }
 }
 
+#[derive(Default)]
+struct BookmarkCatalog {
+    by_id: HashMap<String, BookmarkDefinition>,
+}
+
+impl BookmarkCatalog {
+    fn from_bookmarks(bookmarks: Vec<BookmarkDefinition>) -> Self {
+        let mut by_id = HashMap::new();
+        for bookmark in bookmarks {
+            by_id.insert(bookmark.id.to_string(), bookmark);
+        }
+
+        Self { by_id }
+    }
+
+    fn get(&self, bookmark_id: &CommandId) -> Option<&BookmarkDefinition> {
+        self.by_id.get(bookmark_id.as_str())
+    }
+
+    fn search_results_by_id(&self) -> HashMap<String, SearchResult> {
+        self.by_id
+            .values()
+            .map(|bookmark| {
+                (
+                    bookmark.id.to_string(),
+                    SearchResult {
+                        id: bookmark.id.clone(),
+                        title: bookmark.title.clone(),
+                        subtitle: bookmark.subtitle.clone(),
+                        icon_path: None,
+                        kind: SearchResultKind::Bookmark,
+                        owner_plugin_id: Some(bookmark.owner_plugin_id.clone()),
+                        arguments: Vec::new(),
+                    },
+                )
+            })
+            .collect()
+    }
+
+    fn searchable_documents(&self) -> Vec<SearchableItemDocument> {
+        self.by_id
+            .values()
+            .map(|bookmark| SearchableItemDocument {
+                id: bookmark.id.clone(),
+                kind: SearchResultKind::Bookmark,
+                title: bookmark.title.clone(),
+                subtitle: bookmark.subtitle.clone(),
+                owner_plugin_id: Some(bookmark.owner_plugin_id.clone()),
+                search_text: bookmark_search_text(bookmark),
+            })
+            .collect()
+    }
+}
+
+fn bookmark_search_text(definition: &BookmarkDefinition) -> String {
+    let mut parts = vec![
+        definition.id.to_string(),
+        definition.title.clone(),
+        definition.owner_plugin_id.clone(),
+        definition.url.clone(),
+    ];
+    if let Some(subtitle) = &definition.subtitle {
+        parts.push(subtitle.clone());
+    }
+    parts.extend(definition.keywords.clone());
+    parts.join(" ")
+}
+
 fn read_app_catalog(app_catalog: &RwLock<AppCatalog>) -> RwLockReadGuard<'_, AppCatalog> {
     match app_catalog.read() {
         Ok(app_catalog) => app_catalog,
@@ -293,11 +366,13 @@ pub struct LauncherService {
     platform: Arc<dyn AppPlatform>,
     search_index: Arc<dyn SearchIndex>,
     app_catalog: RwLock<AppCatalog>,
+    bookmark_catalog: BookmarkCatalog,
 }
 
 impl LauncherService {
     pub fn new(
         registry: CommandRegistry,
+        bookmarks: Vec<BookmarkDefinition>,
         platform: Arc<dyn AppPlatform>,
         search_index: Arc<dyn SearchIndex>,
     ) -> Self {
@@ -314,6 +389,7 @@ impl LauncherService {
             platform,
             search_index,
             app_catalog: RwLock::new(app_catalog),
+            bookmark_catalog: BookmarkCatalog::from_bookmarks(bookmarks),
         };
 
         if let Err(error) = service.reindex_search() {
@@ -335,6 +411,7 @@ impl LauncherService {
         let mut search_results = self.registry.search_results_by_id();
         let app_results = read_app_catalog(&self.app_catalog).search_results_by_id();
         search_results.extend(app_results);
+        search_results.extend(self.bookmark_catalog.search_results_by_id());
 
         item_ids
             .into_iter()
@@ -352,6 +429,10 @@ impl LauncherService {
 
         if request.command_id.as_str().starts_with("app:macos:") {
             return self.launch_app(&request.command_id);
+        }
+
+        if self.bookmark_catalog.get(&request.command_id).is_some() {
+            return self.open_bookmark(&request.command_id);
         }
 
         self.registry.execute(request).map_err(LauncherError::from)
@@ -386,6 +467,7 @@ impl LauncherService {
         let mut documents = self.registry.searchable_documents();
         let app_documents = read_app_catalog(&self.app_catalog).searchable_documents();
         documents.extend(app_documents);
+        documents.extend(self.bookmark_catalog.searchable_documents());
         self.search_index.replace_items(&documents)
     }
 
@@ -404,6 +486,25 @@ impl LauncherService {
 
         Ok(CommandExecutionResult {
             output: format!("opened {}", app.title),
+        })
+    }
+
+    fn open_bookmark(
+        &self,
+        bookmark_id: &CommandId,
+    ) -> Result<CommandExecutionResult, LauncherError> {
+        let bookmark = self
+            .bookmark_catalog
+            .get(bookmark_id)
+            .cloned()
+            .ok_or_else(|| LauncherError::AppNotFound(bookmark_id.clone()))?;
+
+        self.platform
+            .open_url(&bookmark.url)
+            .map_err(LauncherError::Platform)?;
+
+        Ok(CommandExecutionResult {
+            output: format!("opened {}", bookmark.title),
         })
     }
 }
@@ -460,6 +561,7 @@ mod tests {
     struct StubPlatform {
         apps: Vec<InstalledApp>,
         launched: Mutex<Vec<String>>,
+        opened_urls: Mutex<Vec<String>>,
     }
 
     impl AppPlatform for StubPlatform {
@@ -469,6 +571,11 @@ mod tests {
 
         fn launch_app(&self, app: &InstalledApp) -> Result<(), String> {
             self.launched.lock().unwrap().push(app.id.to_string());
+            Ok(())
+        }
+
+        fn open_url(&self, url: &str) -> Result<(), String> {
+            self.opened_urls.lock().unwrap().push(url.to_string());
             Ok(())
         }
     }
@@ -513,19 +620,32 @@ mod tests {
                 path: "/Applications/Arc.app".into(),
             }],
             launched: Mutex::new(Vec::new()),
+            opened_urls: Mutex::new(Vec::new()),
         });
         let index = Arc::new(StubSearchIndex {
             configured: true,
             search_results,
             stats: SearchIndexStats {
                 discovered_count: 0,
-                indexed_count: 3,
+                indexed_count: 4,
                 skipped_count: 0,
             },
             last_documents: Mutex::new(Vec::new()),
         });
 
-        LauncherService::new(registry, platform, index)
+        LauncherService::new(
+            registry,
+            vec![BookmarkDefinition {
+                id: CommandId::from("bookmark:github"),
+                title: "GitHub".into(),
+                subtitle: Some("Code hosting".into()),
+                owner_plugin_id: "user.links".into(),
+                url: "https://github.com".into(),
+                keywords: vec!["git".into(), "repos".into()],
+            }],
+            platform,
+            index,
+        )
     }
 
     #[test]
@@ -574,13 +694,15 @@ mod tests {
         let launcher = build_launcher_service(vec![
             String::from("hello"),
             String::from("app:macos:com.example.arc"),
+            String::from("bookmark:github"),
         ]);
 
         let results = launcher.search("arc");
 
-        assert_eq!(results.len(), 2);
+        assert_eq!(results.len(), 3);
         assert_eq!(results[0].kind, SearchResultKind::Command);
         assert_eq!(results[1].kind, SearchResultKind::Application);
+        assert_eq!(results[2].kind, SearchResultKind::Bookmark);
     }
 
     #[test]
@@ -608,7 +730,21 @@ mod tests {
             })
             .unwrap();
 
-        assert_eq!(result.output, "reindexed 3 searchable items (0 skipped)");
+        assert_eq!(result.output, "reindexed 4 searchable items (0 skipped)");
+    }
+
+    #[test]
+    fn execute_routes_bookmark_ids_to_platform_url_opener() {
+        let launcher = build_launcher_service(vec![]);
+
+        let result = launcher
+            .execute(&CommandExecutionRequest {
+                command_id: CommandId::from("bookmark:github"),
+                arguments: HashMap::new(),
+            })
+            .unwrap();
+
+        assert_eq!(result.output, "opened GitHub");
     }
 
     #[test]
@@ -624,27 +760,43 @@ mod tests {
                 path: "/Applications/Arc.app".into(),
             }],
             launched: Mutex::new(Vec::new()),
+            opened_urls: Mutex::new(Vec::new()),
         });
         let index = Arc::new(StubSearchIndex {
             configured: true,
             search_results: Vec::new(),
             stats: SearchIndexStats {
                 discovered_count: 0,
-                indexed_count: 3,
+                indexed_count: 4,
                 skipped_count: 0,
             },
             last_documents: Mutex::new(Vec::new()),
         });
 
-        let _launcher = LauncherService::new(registry, platform, index.clone());
+        let _launcher = LauncherService::new(
+            registry,
+            vec![BookmarkDefinition {
+                id: CommandId::from("bookmark:github"),
+                title: "GitHub".into(),
+                subtitle: Some("Code hosting".into()),
+                owner_plugin_id: "user.links".into(),
+                url: "https://github.com".into(),
+                keywords: vec!["git".into()],
+            }],
+            platform,
+            index.clone(),
+        );
         let documents = index.last_documents.lock().unwrap();
 
-        assert_eq!(documents.len(), 3);
+        assert_eq!(documents.len(), 4);
         assert!(documents
             .iter()
             .any(|document| document.id == CommandId::from("hello")));
         assert!(documents
             .iter()
             .any(|document| document.id == CommandId::from("app:macos:com.example.arc")));
+        assert!(documents
+            .iter()
+            .any(|document| document.id == CommandId::from("bookmark:github")));
     }
 }
