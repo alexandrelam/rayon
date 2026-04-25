@@ -136,19 +136,29 @@ h1 {
 }
 
 .result {
+  width: 100%;
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 12px;
   min-height: 48px;
   padding: 11px 13px;
+  font: inherit;
+  color: inherit;
+  text-align: left;
   border: 1px solid var(--result-border);
   border-radius: 14px;
   background: var(--result-bg);
+  cursor: pointer;
   transition:
     transform 120ms ease,
     border-color 120ms ease,
     background-color 120ms ease;
+}
+
+.result:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 4px var(--input-focus-ring);
 }
 
 .result.is-selected {
