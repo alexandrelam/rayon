@@ -402,7 +402,13 @@ impl From<ManifestArgument> for CommandArgumentDefinition {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, OnceLock};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
 
     fn unique_dir() -> PathBuf {
         let suffix = SystemTime::now()
@@ -414,6 +420,7 @@ mod tests {
 
     #[test]
     fn loads_toml_providers_from_xdg_path() {
+        let _env_guard = env_lock().lock().unwrap();
         let config_home = unique_dir();
         let rayon_dir = config_home.join("rayon");
         fs::create_dir_all(&rayon_dir).unwrap();
@@ -447,6 +454,7 @@ base_args = ["hello"]
 
     #[test]
     fn loads_bookmarks_from_manifest() {
+        let _env_guard = env_lock().lock().unwrap();
         let config_home = unique_dir();
         let rayon_dir = config_home.join("rayon");
         fs::create_dir_all(&rayon_dir).unwrap();
@@ -482,6 +490,7 @@ keywords = ["git", "repos"]
 
     #[test]
     fn rejects_invalid_bookmark_urls() {
+        let _env_guard = env_lock().lock().unwrap();
         let config_home = unique_dir();
         let rayon_dir = config_home.join("rayon");
         fs::create_dir_all(&rayon_dir).unwrap();

@@ -4,54 +4,104 @@ use tauri::{
     AppHandle, Emitter, Manager, WindowEvent,
 };
 
-use rayon_core::{load_config, CommandRegistry, LauncherService};
+use rayon_core::{
+    load_config, AppPlatform, CommandRegistry, LauncherService, SearchIndex, APP_REINDEX_COMMAND_ID,
+};
 use rayon_db::TantivySearchIndex;
 use rayon_features::built_in_providers;
 use rayon_platform::MacOsAppManager;
-use rayon_types::{CommandExecutionRequest, CommandExecutionResult, SearchResult};
+use rayon_types::{
+    BookmarkDefinition, CommandExecutionRequest, CommandExecutionResult, SearchResult,
+};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 const MAIN_WINDOW_LABEL: &str = "main";
 const LAUNCHER_OPENED_EVENT: &str = "launcher:opened";
 
 struct AppState {
-    launcher: LauncherService,
+    launcher: RwLock<LauncherService>,
+    platform: Arc<dyn AppPlatform>,
+    search_index: Arc<dyn SearchIndex>,
 }
 
 impl AppState {
     fn new(app: &AppHandle) -> Result<Self, String> {
-        let mut registry = CommandRegistry::new();
-        let loaded_config = load_config().map_err(|error| error.to_string())?;
-
-        for provider in built_in_providers() {
-            registry
-                .register_provider(provider)
-                .map_err(|error| format!("failed to register built-in provider: {error}"))?;
-        }
-
-        for provider in loaded_config.command_providers {
-            registry
-                .register_provider(provider)
-                .map_err(|error| error.to_string())?;
-        }
-        validate_bookmark_ids(&registry, &loaded_config.bookmarks)?;
-
         let app_index = Arc::new(
             TantivySearchIndex::open_or_create(app_search_index_path(app)?)
                 .map_err(|error| error.to_string())?,
         );
         let platform = Arc::new(MacOsAppManager);
+        let launcher = build_launcher(platform.clone(), app_index.clone())?;
 
         Ok(Self {
-            launcher: LauncherService::new(registry, loaded_config.bookmarks, platform, app_index),
+            launcher: RwLock::new(launcher),
+            platform,
+            search_index: app_index,
         })
     }
+
+    fn reload(&self) -> Result<CommandExecutionResult, String> {
+        reload_launcher(
+            &self.launcher,
+            self.platform.clone(),
+            self.search_index.clone(),
+        )
+    }
+}
+
+fn build_launcher(
+    platform: Arc<dyn AppPlatform>,
+    search_index: Arc<dyn SearchIndex>,
+) -> Result<LauncherService, String> {
+    let (registry, bookmarks) = load_registry_and_bookmarks()?;
+    Ok(LauncherService::new(
+        registry,
+        bookmarks,
+        platform,
+        search_index,
+    ))
+}
+
+fn reload_launcher(
+    launcher_slot: &RwLock<LauncherService>,
+    platform: Arc<dyn AppPlatform>,
+    search_index: Arc<dyn SearchIndex>,
+) -> Result<CommandExecutionResult, String> {
+    let launcher = build_launcher(platform, search_index)?;
+    let result = launcher
+        .execute(&CommandExecutionRequest {
+            command_id: APP_REINDEX_COMMAND_ID.into(),
+            arguments: Default::default(),
+        })
+        .map_err(|error| error.to_string())?;
+    *write_launcher(launcher_slot) = launcher;
+    Ok(result)
+}
+
+fn load_registry_and_bookmarks() -> Result<(CommandRegistry, Vec<BookmarkDefinition>), String> {
+    let mut registry = CommandRegistry::new();
+    let loaded_config = load_config().map_err(|error| error.to_string())?;
+
+    for provider in built_in_providers() {
+        registry
+            .register_provider(provider)
+            .map_err(|error| format!("failed to register built-in provider: {error}"))?;
+    }
+
+    for provider in loaded_config.command_providers {
+        registry
+            .register_provider(provider)
+            .map_err(|error| error.to_string())?;
+    }
+
+    validate_bookmark_ids(&registry, &loaded_config.bookmarks)?;
+    Ok((registry, loaded_config.bookmarks))
 }
 
 fn validate_bookmark_ids(
     registry: &CommandRegistry,
-    bookmarks: &[rayon_types::BookmarkDefinition],
+    bookmarks: &[BookmarkDefinition],
 ) -> Result<(), String> {
     let command_ids = registry.search_results_by_id();
     for bookmark in bookmarks {
@@ -73,9 +123,29 @@ fn app_search_index_path(app: &AppHandle) -> Result<PathBuf, String> {
         .map_err(|error| error.to_string())
 }
 
+fn read_launcher(launcher: &RwLock<LauncherService>) -> RwLockReadGuard<'_, LauncherService> {
+    match launcher.read() {
+        Ok(launcher) => launcher,
+        Err(poisoned) => {
+            eprintln!("launcher lock poisoned while reading");
+            poisoned.into_inner()
+        }
+    }
+}
+
+fn write_launcher(launcher: &RwLock<LauncherService>) -> RwLockWriteGuard<'_, LauncherService> {
+    match launcher.write() {
+        Ok(launcher) => launcher,
+        Err(poisoned) => {
+            eprintln!("launcher lock poisoned while writing");
+            poisoned.into_inner()
+        }
+    }
+}
+
 #[tauri::command]
 fn search(query: String, state: tauri::State<'_, AppState>) -> Vec<SearchResult> {
-    state.launcher.search(&query)
+    read_launcher(&state.launcher).search(&query)
 }
 
 #[tauri::command]
@@ -83,8 +153,11 @@ fn execute_command(
     request: CommandExecutionRequest,
     state: tauri::State<'_, AppState>,
 ) -> Result<CommandExecutionResult, String> {
-    state
-        .launcher
+    if request.command_id.as_str() == APP_REINDEX_COMMAND_ID {
+        return state.reload();
+    }
+
+    read_launcher(&state.launcher)
         .execute(&request)
         .map_err(|error| error.to_string())
 }
@@ -238,5 +311,221 @@ pub fn run() {
 
     if let Err(error) = app {
         eprintln!("error while running tauri application: {error}");
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use rayon_db::SearchIndexStats;
+    use rayon_types::{CommandId, InstalledApp, SearchableItemDocument};
+    use std::fs;
+    use std::path::Path;
+    use std::sync::{Mutex, OnceLock};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    struct StubPlatform;
+
+    impl AppPlatform for StubPlatform {
+        fn discover_apps(&self) -> Result<Vec<InstalledApp>, String> {
+            Ok(Vec::new())
+        }
+
+        fn launch_app(&self, _app: &InstalledApp) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn open_url(&self, _url: &str) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct StubSearchIndex {
+        documents: Mutex<Vec<SearchableItemDocument>>,
+    }
+
+    impl SearchIndex for StubSearchIndex {
+        fn is_configured(&self) -> bool {
+            true
+        }
+
+        fn search_item_ids(&self, query: &str, limit: usize) -> Result<Vec<String>, String> {
+            let query = query.to_lowercase();
+            Ok(self
+                .documents
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|document| document.search_text.to_lowercase().contains(&query))
+                .take(limit)
+                .map(|document| document.id.to_string())
+                .collect())
+        }
+
+        fn replace_items(
+            &self,
+            items: &[SearchableItemDocument],
+        ) -> Result<SearchIndexStats, String> {
+            *self.documents.lock().unwrap() = items.to_vec();
+            Ok(SearchIndexStats {
+                discovered_count: items.len(),
+                indexed_count: items.len(),
+                skipped_count: 0,
+            })
+        }
+    }
+
+    fn temp_config_home(test_name: &str) -> std::path::PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("rayon-{test_name}-{unique}"))
+    }
+
+    fn write_config(path: &Path, manifests: &[(&str, &str)]) {
+        fs::create_dir_all(path.join("rayon")).unwrap();
+        for (name, contents) in manifests {
+            fs::write(path.join("rayon").join(name), contents).unwrap();
+        }
+    }
+
+    #[test]
+    fn reload_launcher_picks_up_new_commands_and_bookmarks() {
+        let _env_guard = env_lock().lock().unwrap();
+        let config_home = temp_config_home("reload-success");
+        write_config(
+            &config_home,
+            &[(
+                "commands.toml",
+                r#"
+plugin_id = "user.commands"
+
+[[commands]]
+id = "user.echo"
+title = "Echo"
+program = "/bin/echo"
+"#,
+            )],
+        );
+        std::env::set_var("XDG_CONFIG_HOME", &config_home);
+
+        let search_index = Arc::new(StubSearchIndex::default());
+        let platform: Arc<dyn AppPlatform> = Arc::new(StubPlatform);
+        let launcher = build_launcher(platform.clone(), search_index.clone()).unwrap();
+        let launcher_slot = RwLock::new(launcher);
+
+        write_config(
+            &config_home,
+            &[
+                (
+                    "commands.toml",
+                    r#"
+plugin_id = "user.commands"
+
+[[commands]]
+id = "user.echo"
+title = "Echo"
+program = "/bin/echo"
+
+[[commands]]
+id = "user.ping"
+title = "Ping"
+program = "/bin/echo"
+base_args = ["pong"]
+"#,
+                ),
+                (
+                    "bookmarks.toml",
+                    r#"
+plugin_id = "user.bookmarks"
+
+[[bookmarks]]
+id = "user.jira"
+title = "Jira Board"
+url = "https://example.com/jira"
+keywords = ["jira", "board"]
+"#,
+                ),
+            ],
+        );
+
+        let result = reload_launcher(&launcher_slot, platform, search_index).unwrap();
+        assert!(result.output.starts_with("reindexed "));
+
+        let launcher = read_launcher(&launcher_slot);
+        let ping_results = launcher.search("ping");
+        assert!(ping_results
+            .iter()
+            .any(|result| result.id == CommandId::from("user.ping")));
+
+        let jira_results = launcher.search("jira");
+        assert!(jira_results
+            .iter()
+            .any(|result| result.id == CommandId::from("user.jira")));
+
+        fs::remove_dir_all(config_home).unwrap();
+        std::env::remove_var("XDG_CONFIG_HOME");
+    }
+
+    #[test]
+    fn reload_launcher_keeps_previous_state_when_config_is_invalid() {
+        let _env_guard = env_lock().lock().unwrap();
+        let config_home = temp_config_home("reload-failure");
+        write_config(
+            &config_home,
+            &[(
+                "bookmarks.toml",
+                r#"
+plugin_id = "user.bookmarks"
+
+[[bookmarks]]
+id = "user.docs"
+title = "Docs"
+url = "https://example.com/docs"
+keywords = ["docs"]
+"#,
+            )],
+        );
+        std::env::set_var("XDG_CONFIG_HOME", &config_home);
+
+        let search_index = Arc::new(StubSearchIndex::default());
+        let platform: Arc<dyn AppPlatform> = Arc::new(StubPlatform);
+        let launcher = build_launcher(platform.clone(), search_index.clone()).unwrap();
+        let launcher_slot = RwLock::new(launcher);
+
+        write_config(
+            &config_home,
+            &[(
+                "bookmarks.toml",
+                r#"
+plugin_id = "user.bookmarks"
+
+[[bookmarks]]
+id = "user.docs"
+title = "Broken"
+url = "not-a-url"
+"#,
+            )],
+        );
+
+        let error = reload_launcher(&launcher_slot, platform, search_index).unwrap_err();
+        assert!(error.contains("invalid bookmark url"));
+
+        let launcher = read_launcher(&launcher_slot);
+        let results = launcher.search("docs");
+        assert!(results
+            .iter()
+            .any(|result| result.id == CommandId::from("user.docs")));
+
+        fs::remove_dir_all(config_home).unwrap();
+        std::env::remove_var("XDG_CONFIG_HOME");
     }
 }

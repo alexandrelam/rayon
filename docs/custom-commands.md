@@ -141,4 +141,4 @@ Ask the assistant to write valid TOML using only the supported keys listed above
 - Command fails immediately: verify that `program` points to a real executable.
 - Relative path does not resolve: remember relative paths are resolved from the manifest file's directory, not your shell's current directory.
 - Boolean argument rejected: enter a true/false style value such as `true`, `false`, `yes`, `no`, `1`, `0`, `on`, or `off`.
-- Config change not visible yet: restart `rayon` so it reloads commands from the config directory.
+- Config change not visible yet: run `apps.reindex` in `rayon` to reload commands from the config directory. If reload fails, `rayon` keeps the previous live state and shows the config error.

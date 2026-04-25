@@ -112,5 +112,5 @@ keywords = ["issues", "tickets", "projects"]
 - Nothing appears in `rayon`: confirm the file is under `$XDG_CONFIG_HOME/rayon` or `~/.config/rayon`.
 - TOML parse error: check for missing quotes, invalid tables, or unsupported keys.
 - Bookmark does not open: verify that `url` is absolute and includes `http://` or `https://`.
-- Config change not visible yet: restart `rayon` so it reloads bookmarks from the config directory.
+- Config change not visible yet: run `apps.reindex` in `rayon` to reload bookmarks from the config directory. If reload fails, `rayon` keeps the previous live state and shows the config error.
 - Bookmark conflicts with another item: choose a different `id` that does not overlap with existing bookmarks or commands.

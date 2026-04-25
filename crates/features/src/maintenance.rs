@@ -8,7 +8,7 @@ impl CommandProvider for MaintenanceProvider {
         vec![CommandDefinition {
             id: CommandId::from(APP_REINDEX_COMMAND_ID),
             title: "Reindex Search".into(),
-            subtitle: Some("Refresh apps and searchable commands".into()),
+            subtitle: Some("Refresh apps, commands, bookmarks, and search".into()),
             owner_plugin_id: "builtin.maintenance".into(),
             keywords: vec!["refresh".into(), "index".into()],
             arguments: Vec::new(),
