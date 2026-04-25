@@ -12,6 +12,7 @@ pub fn built_in_providers() -> Vec<Arc<dyn CommandProvider>> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use rayon_core::CommandRegistry;

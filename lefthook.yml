@@ -1,0 +1,20 @@
+pre-commit:
+  parallel: true
+  commands:
+    frontend-format:
+      run: pnpm exec biome format --write apps/desktop/src apps/desktop/vite.config.ts eslint.config.mjs
+    frontend-lint:
+      run: pnpm --dir apps/desktop exec eslint . --max-warnings=0
+    frontend-typecheck:
+      run: pnpm --dir apps/desktop exec tsc --noEmit
+    rustfmt:
+      run: cargo fmt --all --check
+    clippy:
+      run: cargo clippy --workspace --all-targets -- -D warnings -W clippy::unwrap_used -W clippy::expect_used -W clippy::panic -W clippy::todo -W clippy::dbg_macro
+
+pre-push:
+  commands:
+    frontend-tests:
+      run: pnpm --dir apps/desktop test
+    rust-tests:
+      run: cargo test --workspace

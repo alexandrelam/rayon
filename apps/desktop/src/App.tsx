@@ -1,12 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { type KeyboardEvent, useEffect, useRef, useState } from "react";
 import {
   beginPendingExecution,
-  currentArgument,
-  currentArgumentInputValue,
   type CommandArgumentValue,
   type CommandExecutionResult,
+  currentArgument,
+  currentArgumentInputValue,
   type PendingExecution,
   resolvePendingExecutionStep,
   type SearchResult,
@@ -21,6 +21,19 @@ function App() {
   const [executionResult, setExecutionResult] = useState<string>("");
   const [error, setError] = useState<string>("");
   const [pendingExecution, setPendingExecution] = useState<PendingExecution | null>(null);
+
+  function resetLauncher() {
+    setQuery("");
+    setExecutionResult("");
+    setError("");
+    setSelectedIndex(0);
+    setPendingExecution(null);
+    setResults([]);
+    requestAnimationFrame(() => {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    });
+  }
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -83,20 +96,10 @@ function App() {
     };
   }, [query, pendingExecution]);
 
-  function resetLauncher() {
-    setQuery("");
-    setExecutionResult("");
-    setError("");
-    setSelectedIndex(0);
-    setPendingExecution(null);
-    setResults([]);
-    requestAnimationFrame(() => {
-      inputRef.current?.focus();
-      inputRef.current?.select();
-    });
-  }
-
-  async function executeCommand(commandId: string, argumentsMap: Record<string, CommandArgumentValue>) {
+  async function executeCommand(
+    commandId: string,
+    argumentsMap: Record<string, CommandArgumentValue>,
+  ) {
     try {
       const response = await invoke<CommandExecutionResult>("execute_command", {
         request: {
@@ -110,11 +113,7 @@ function App() {
       inputRef.current?.focus();
     } catch (executionError) {
       setExecutionResult("");
-      setError(
-        executionError instanceof Error
-          ? executionError.message
-          : String(executionError),
-      );
+      setError(executionError instanceof Error ? executionError.message : String(executionError));
     }
   }
 
@@ -141,11 +140,11 @@ function App() {
   }
 
   async function executeSelectedCommand() {
-    const selectedCommand = results[selectedIndex];
-    if (!selectedCommand) {
+    if (selectedIndex >= results.length) {
       return;
     }
 
+    const selectedCommand = results[selectedIndex];
     await executeResult(selectedCommand);
   }
 
@@ -279,7 +278,9 @@ function App() {
           ref={inputRef}
           className="palette-input"
           value={query}
-          onChange={(event) => handleQueryChange(event.currentTarget.value)}
+          onChange={(event) => {
+            handleQueryChange(event.currentTarget.value);
+          }}
           onKeyDown={handleKeyDown}
           placeholder={
             activeArgument
@@ -308,14 +309,13 @@ function App() {
         ) : (
           <ul className="results" aria-label="Search results">
             {results.map((result, index) => (
-              <li
-                key={result.id}
-              >
+              <li key={result.id}>
                 <button
                   type="button"
                   className={index === selectedIndex ? "result is-selected" : "result"}
-                  aria-selected={index === selectedIndex}
-                  onMouseDown={(event) => event.preventDefault()}
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                  }}
                   onClick={() => {
                     setSelectedIndex(index);
                     void executeResult(result);
@@ -325,7 +325,11 @@ function App() {
                     <span className="result-row">
                       <span className="result-title">{result.title}</span>
                       <span className="result-kind">
-                        {result.kind === "application" ? "App" : result.arguments.length > 0 ? "Action" : "Command"}
+                        {result.kind === "application"
+                          ? "App"
+                          : result.arguments.length > 0
+                            ? "Action"
+                            : "Command"}
                       </span>
                     </span>
                     <span className="result-meta">
@@ -342,7 +346,13 @@ function App() {
         )}
 
         <section className="output" aria-live="polite">
-          {executionResult ? <p>{executionResult}</p> : <p className="muted">{pendingExecution ? "Press Enter to continue." : "Press Enter to execute."}</p>}
+          {executionResult ? (
+            <p>{executionResult}</p>
+          ) : (
+            <p className="muted">
+              {pendingExecution ? "Press Enter to continue." : "Press Enter to execute."}
+            </p>
+          )}
           {error ? <p className="error">{error}</p> : null}
         </section>
       </section>

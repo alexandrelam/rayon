@@ -84,8 +84,11 @@ describe("commandExecution helpers", () => {
         arguments: [toggleArgument],
       }),
     );
+    if (!pendingExecution) {
+      throw new Error("pending execution should be created for commands with arguments");
+    }
 
-    expect(resolvePendingExecutionStep(pendingExecution!, "maybe")).toEqual({
+    expect(resolvePendingExecutionStep(pendingExecution, "maybe")).toEqual({
       kind: "error",
       message: "Enabled expects true/false",
     });
@@ -99,8 +102,11 @@ describe("commandExecution helpers", () => {
         arguments: [toggleArgument],
       }),
     );
+    if (!pendingExecution) {
+      throw new Error("pending execution should be created for commands with arguments");
+    }
 
-    expect(resolvePendingExecutionStep(pendingExecution!, "true")).toEqual({
+    expect(resolvePendingExecutionStep(pendingExecution, "true")).toEqual({
       kind: "execute",
       commandId: "apps.reindex",
       argumentsMap: {

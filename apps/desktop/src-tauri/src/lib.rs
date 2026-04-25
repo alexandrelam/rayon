@@ -26,7 +26,7 @@ impl AppState {
         for provider in built_in_providers() {
             registry
                 .register_provider(provider)
-                .expect("built-in providers must register without conflicts");
+                .map_err(|error| format!("failed to register built-in provider: {error}"))?;
         }
 
         for provider in load_config_providers().map_err(|error| error.to_string())? {
@@ -173,7 +173,7 @@ fn build_tray(app: &mut tauri::App) -> tauri::Result<()> {
                 ..
             } = event
             {
-                let _ = toggle_launcher(&tray.app_handle());
+                let _ = toggle_launcher(tray.app_handle());
             }
         })
         .build(app)?;
@@ -183,7 +183,7 @@ fn build_tray(app: &mut tauri::App) -> tauri::Result<()> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, _shortcut, event| {
@@ -198,7 +198,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let app_state =
-                AppState::new(app.handle()).expect("failed to initialize application state");
+                AppState::new(app.handle()).map_err(Box::<dyn std::error::Error>::from)?;
             app.manage(app_state);
             set_macos_activation_policy(app);
             build_tray(app)?;
@@ -215,6 +215,9 @@ pub fn run() {
             execute_command,
             hide_launcher
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .run(tauri::generate_context!());
+
+    if let Err(error) = app {
+        eprintln!("error while running tauri application: {error}");
+    }
 }

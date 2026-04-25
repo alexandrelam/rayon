@@ -230,7 +230,9 @@ impl SearchableFields {
         Self {
             title: prefix_search_terms(&item.title),
             subtitle: prefix_search_terms(item.subtitle.as_deref().unwrap_or_default()),
-            owner_plugin_id: prefix_search_terms(item.owner_plugin_id.as_deref().unwrap_or_default()),
+            owner_plugin_id: prefix_search_terms(
+                item.owner_plugin_id.as_deref().unwrap_or_default(),
+            ),
             search_text: prefix_search_terms(&item.search_text),
         }
     }
@@ -290,6 +292,7 @@ fn prefix_search_terms(text: &str) -> String {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use rayon_types::CommandId;

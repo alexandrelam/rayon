@@ -7,10 +7,7 @@ export type CommandArgumentDefinition = {
   required: boolean;
   flag: string | null;
   positional: number | null;
-  default_value:
-    | { type: "string"; value: string }
-    | { type: "boolean"; value: boolean }
-    | null;
+  default_value: { type: "string"; value: string } | { type: "boolean"; value: boolean } | null;
 };
 
 export type SearchResult = {
@@ -35,7 +32,7 @@ export type PendingExecution = {
   commandId: string;
   commandTitle: string;
   arguments: CommandArgumentDefinition[];
-  values: Record<string, CommandArgumentValue>;
+  values: Partial<Record<string, CommandArgumentValue>>;
   currentIndex: number;
 };
 
@@ -129,7 +126,7 @@ export function resolvePendingExecutionStep(
     return {
       kind: "execute",
       commandId: pendingExecution.commandId,
-      argumentsMap: pendingExecution.values,
+      argumentsMap: toArgumentsMap(pendingExecution.values),
     };
   }
 
@@ -142,15 +139,23 @@ export function resolvePendingExecutionStep(
   if (parsedValue) {
     nextValues[argument.id] = parsedValue;
   } else {
-    delete nextValues[argument.id];
+    const { [argument.id]: _deletedValue, ...remainingValues } = nextValues;
+    return buildPendingExecutionStep(pendingExecution, remainingValues);
   }
 
+  return buildPendingExecutionStep(pendingExecution, nextValues);
+}
+
+function buildPendingExecutionStep(
+  pendingExecution: PendingExecution,
+  values: Partial<Record<string, CommandArgumentValue>>,
+): PendingExecutionStep {
   const nextIndex = pendingExecution.currentIndex + 1;
   if (nextIndex >= pendingExecution.arguments.length) {
     return {
       kind: "execute",
       commandId: pendingExecution.commandId,
-      argumentsMap: nextValues,
+      argumentsMap: toArgumentsMap(values),
     };
   }
 
@@ -158,8 +163,18 @@ export function resolvePendingExecutionStep(
     kind: "advance",
     pendingExecution: {
       ...pendingExecution,
-      values: nextValues,
+      values,
       currentIndex: nextIndex,
     },
   };
+}
+
+function toArgumentsMap(
+  values: Partial<Record<string, CommandArgumentValue>>,
+): Record<string, CommandArgumentValue> {
+  return Object.fromEntries(
+    Object.entries(values).filter((entry): entry is [string, CommandArgumentValue] => {
+      return entry[1] !== undefined;
+    }),
+  );
 }

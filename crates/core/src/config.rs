@@ -39,8 +39,12 @@ fn config_dir() -> Result<PathBuf, String> {
 }
 
 fn manifest_paths(config_dir: &Path) -> Result<Vec<PathBuf>, String> {
-    let entries = fs::read_dir(config_dir)
-        .map_err(|error| format!("failed to read config directory {}: {error}", config_dir.display()))?;
+    let entries = fs::read_dir(config_dir).map_err(|error| {
+        format!(
+            "failed to read config directory {}: {error}",
+            config_dir.display()
+        )
+    })?;
 
     let mut manifest_paths = entries
         .filter_map(Result::ok)
@@ -54,8 +58,12 @@ fn manifest_paths(config_dir: &Path) -> Result<Vec<PathBuf>, String> {
 fn load_manifest(path: &Path) -> Result<PluginManifest, String> {
     let source = fs::read_to_string(path)
         .map_err(|error| format!("failed to read plugin manifest {}: {error}", path.display()))?;
-    toml::from_str(&source)
-        .map_err(|error| format!("failed to parse plugin manifest {}: {error}", path.display()))
+    toml::from_str(&source).map_err(|error| {
+        format!(
+            "failed to parse plugin manifest {}: {error}",
+            path.display()
+        )
+    })
 }
 
 #[derive(Debug)]
@@ -85,7 +93,8 @@ impl DeclarativeCommandProvider {
                     .map(Into::into)
                     .collect(),
             };
-            let spec = ExecutableCommandSpec::from_manifest_command(base_dir, &definition, command)?;
+            let spec =
+                ExecutableCommandSpec::from_manifest_command(base_dir, &definition, command)?;
 
             command_definitions.push(definition);
             commands_by_id.insert(command_id.to_string(), spec);
@@ -132,7 +141,10 @@ impl ExecutableCommandSpec {
         command: ManifestCommand,
     ) -> Result<Self, String> {
         let program = resolve_path(base_dir, &command.program);
-        let working_dir = command.working_dir.as_deref().map(|path| resolve_path(base_dir, path));
+        let working_dir = command
+            .working_dir
+            .as_deref()
+            .map(|path| resolve_path(base_dir, path));
 
         Ok(Self {
             definition: definition.clone(),
@@ -143,7 +155,10 @@ impl ExecutableCommandSpec {
         })
     }
 
-    fn execute(&self, request: &CommandExecutionRequest) -> Result<CommandExecutionResult, CommandError> {
+    fn execute(
+        &self,
+        request: &CommandExecutionRequest,
+    ) -> Result<CommandExecutionResult, CommandError> {
         let mut argv = self.base_args.clone();
         let mut positional_values: BTreeMap<usize, String> = BTreeMap::new();
 
@@ -289,7 +304,9 @@ impl From<ManifestArgument> for CommandArgumentDefinition {
     fn from(value: ManifestArgument) -> Self {
         let default_value = match value.argument_type {
             CommandArgumentType::String => value.default_string.map(CommandArgumentValue::String),
-            CommandArgumentType::Boolean => value.default_boolean.map(CommandArgumentValue::Boolean),
+            CommandArgumentType::Boolean => {
+                value.default_boolean.map(CommandArgumentValue::Boolean)
+            }
         };
 
         Self {
@@ -305,6 +322,7 @@ impl From<ManifestArgument> for CommandArgumentDefinition {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};

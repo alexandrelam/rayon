@@ -11,7 +11,7 @@ use rayon_types::{
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 pub const APP_REINDEX_COMMAND_ID: &str = "apps.reindex";
 const SEARCH_LIMIT: usize = 20;
@@ -170,7 +170,12 @@ fn command_search_text(definition: &CommandDefinition) -> String {
         parts.push(subtitle.clone());
     }
     parts.extend(definition.keywords.clone());
-    parts.extend(definition.arguments.iter().map(|argument| argument.label.clone()));
+    parts.extend(
+        definition
+            .arguments
+            .iter()
+            .map(|argument| argument.label.clone()),
+    );
     parts.join(" ")
 }
 
@@ -263,6 +268,26 @@ impl AppCatalog {
     }
 }
 
+fn read_app_catalog(app_catalog: &RwLock<AppCatalog>) -> RwLockReadGuard<'_, AppCatalog> {
+    match app_catalog.read() {
+        Ok(app_catalog) => app_catalog,
+        Err(poisoned) => {
+            eprintln!("app catalog lock poisoned while reading");
+            poisoned.into_inner()
+        }
+    }
+}
+
+fn write_app_catalog(app_catalog: &RwLock<AppCatalog>) -> RwLockWriteGuard<'_, AppCatalog> {
+    match app_catalog.write() {
+        Ok(app_catalog) => app_catalog,
+        Err(poisoned) => {
+            eprintln!("app catalog lock poisoned while writing");
+            poisoned.into_inner()
+        }
+    }
+}
+
 pub struct LauncherService {
     registry: CommandRegistry,
     platform: Arc<dyn AppPlatform>,
@@ -308,11 +333,7 @@ impl LauncherService {
         };
 
         let mut search_results = self.registry.search_results_by_id();
-        let app_results = self
-            .app_catalog
-            .read()
-            .expect("app catalog lock poisoned")
-            .search_results_by_id();
+        let app_results = read_app_catalog(&self.app_catalog).search_results_by_id();
         search_results.extend(app_results);
 
         item_ids
@@ -346,11 +367,13 @@ impl LauncherService {
             .discover_apps()
             .map_err(LauncherError::Platform)?;
         {
-            let mut app_catalog = self.app_catalog.write().expect("app catalog lock poisoned");
+            let mut app_catalog = write_app_catalog(&self.app_catalog);
             *app_catalog = AppCatalog::from_apps(apps);
         }
 
-        let stats = self.reindex_search().map_err(LauncherError::SearchBackend)?;
+        let stats = self
+            .reindex_search()
+            .map_err(LauncherError::SearchBackend)?;
         Ok(CommandExecutionResult {
             output: format!(
                 "reindexed {} searchable items ({} skipped)",
@@ -361,18 +384,14 @@ impl LauncherService {
 
     fn reindex_search(&self) -> Result<SearchIndexStats, String> {
         let mut documents = self.registry.searchable_documents();
-        let app_documents = self
-            .app_catalog
-            .read()
-            .expect("app catalog lock poisoned")
-            .searchable_documents();
+        let app_documents = read_app_catalog(&self.app_catalog).searchable_documents();
         documents.extend(app_documents);
         self.search_index.replace_items(&documents)
     }
 
     fn launch_app(&self, command_id: &CommandId) -> Result<CommandExecutionResult, LauncherError> {
         let app = {
-            let app_catalog = self.app_catalog.read().expect("app catalog lock poisoned");
+            let app_catalog = read_app_catalog(&self.app_catalog);
             app_catalog
                 .get(command_id)
                 .cloned()
@@ -390,6 +409,7 @@ impl LauncherService {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use rayon_types::{CommandArgumentType, CommandExecutionRequest};
@@ -469,7 +489,10 @@ mod tests {
             Ok(self.search_results.clone())
         }
 
-        fn replace_items(&self, items: &[SearchableItemDocument]) -> Result<SearchIndexStats, String> {
+        fn replace_items(
+            &self,
+            items: &[SearchableItemDocument],
+        ) -> Result<SearchIndexStats, String> {
             *self.last_documents.lock().unwrap() = items.to_vec();
             Ok(SearchIndexStats {
                 discovered_count: items.len(),
