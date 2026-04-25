@@ -1,0 +1,7 @@
+[package]
+name = "rayon-core"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+rayon-types = { path = "../types" }
