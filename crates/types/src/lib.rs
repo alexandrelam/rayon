@@ -113,6 +113,8 @@ pub struct SearchResult {
     pub kind: SearchResultKind,
     pub owner_plugin_id: Option<String>,
     #[serde(default)]
+    pub starts_interactive_session: bool,
+    #[serde(default)]
     pub arguments: Vec<CommandArgumentDefinition>,
 }
 
@@ -155,6 +157,8 @@ pub struct InteractiveSessionState {
     pub subtitle: Option<String>,
     pub input_placeholder: String,
     pub query: String,
+    #[serde(default)]
+    pub is_loading: bool,
     #[serde(default)]
     pub results: Vec<InteractiveSessionResult>,
     #[serde(default)]

@@ -17,6 +17,7 @@ export type SearchResult = {
   icon_path: string | null;
   kind: "command" | "application" | "bookmark";
   owner_plugin_id: string | null;
+  starts_interactive_session: boolean;
   arguments: CommandArgumentDefinition[];
 };
 
@@ -37,6 +38,7 @@ export type InteractiveSessionState = {
   subtitle: string | null;
   input_placeholder: string;
   query: string;
+  is_loading: boolean;
   results: InteractiveSessionResult[];
   message: string | null;
 };

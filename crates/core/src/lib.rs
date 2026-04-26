@@ -132,6 +132,7 @@ pub struct CommandRegistry {
 #[derive(Clone)]
 struct RegisteredCommand {
     definition: CommandDefinition,
+    starts_interactive_session: bool,
 }
 
 impl CommandRegistry {
@@ -152,8 +153,15 @@ impl CommandRegistry {
                 return Err(CommandError::DuplicateCommandId(definition.id));
             }
 
+            let starts_interactive_session = provider
+                .start_interactive_session(&definition.id)?
+                .is_some();
+
             self.command_owners.insert(command_key, provider_index);
-            self.commands.push(RegisteredCommand { definition });
+            self.commands.push(RegisteredCommand {
+                definition,
+                starts_interactive_session,
+            });
         }
 
         self.providers.push(provider);
@@ -222,6 +230,7 @@ impl CommandRegistry {
                         icon_path: None,
                         kind: SearchResultKind::Command,
                         owner_plugin_id: Some(command.definition.owner_plugin_id.clone()),
+                        starts_interactive_session: command.starts_interactive_session,
                         arguments: command.definition.arguments.clone(),
                     },
                 )
@@ -359,6 +368,7 @@ impl AppCatalog {
                         icon_path: None,
                         kind: SearchResultKind::Application,
                         owner_plugin_id: None,
+                        starts_interactive_session: false,
                         arguments: Vec::new(),
                     },
                 )
@@ -399,6 +409,7 @@ impl BookmarkCatalog {
                         icon_path: None,
                         kind: SearchResultKind::Bookmark,
                         owner_plugin_id: Some(bookmark.owner_plugin_id.clone()),
+                        starts_interactive_session: false,
                         arguments: Vec::new(),
                     },
                 )
@@ -599,11 +610,6 @@ impl LauncherService {
                 },
             );
 
-            let results = self.registry.search_interactive_session(
-                session_owner.provider_index,
-                &metadata,
-                "",
-            )?;
             return Ok(CommandInvocationResult::StartedSession {
                 session: InteractiveSessionState {
                     session_id,
@@ -612,7 +618,8 @@ impl LauncherService {
                     subtitle: metadata.subtitle,
                     input_placeholder: metadata.input_placeholder,
                     query: String::new(),
-                    results,
+                    is_loading: true,
+                    results: Vec::new(),
                     message: None,
                 },
             });
@@ -645,6 +652,7 @@ impl LauncherService {
             subtitle: session.metadata.subtitle,
             input_placeholder: session.metadata.input_placeholder,
             query: request.query.clone(),
+            is_loading: false,
             results,
             message: None,
         })
@@ -672,6 +680,7 @@ impl LauncherService {
                         subtitle: session.metadata.subtitle,
                         input_placeholder: session.metadata.input_placeholder,
                         query: request.query.clone(),
+                        is_loading: false,
                         results: update.results,
                         message: update.message,
                     },
@@ -1113,7 +1122,8 @@ mod tests {
         };
         assert_eq!(session.command_id, CommandId::from("kill"));
         assert_eq!(session.title, "Kill Process");
-        assert_eq!(session.results[0].title, "Arc");
+        assert!(session.is_loading);
+        assert!(session.results.is_empty());
     }
 
     #[test]
@@ -1141,6 +1151,7 @@ mod tests {
             })
             .unwrap();
         assert_eq!(searched.query, "8080");
+        assert!(!searched.is_loading);
         assert_eq!(searched.results[0].id, "result:8080");
 
         let submitted = launcher

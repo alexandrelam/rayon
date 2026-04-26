@@ -5,7 +5,7 @@ use rayon_types::{
     InteractiveSessionState, InteractiveSessionSubmitRequest, InteractiveSessionSubmitResult,
     SearchResult,
 };
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, LogicalSize, Manager, Size};
 
 #[tauri::command]
 pub fn search(query: String, state: tauri::State<'_, AppState>) -> Vec<SearchResult> {
@@ -60,4 +60,16 @@ pub fn hide_launcher(app: AppHandle) -> Result<(), String> {
         .ok_or_else(|| "main window is not available".to_string())?;
 
     window.hide().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn resize_launcher(app: AppHandle, height: f64) -> Result<(), String> {
+    let window = app
+        .get_webview_window(MAIN_WINDOW_LABEL)
+        .ok_or_else(|| "main window is not available".to_string())?;
+
+    let clamped_height = height.clamp(160.0, 420.0);
+    window
+        .set_size(Size::Logical(LogicalSize::new(760.0, clamped_height)))
+        .map_err(|error| error.to_string())
 }

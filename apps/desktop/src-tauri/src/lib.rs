@@ -41,6 +41,7 @@ pub fn run() {
             invoke::launcher::search_interactive_session,
             invoke::launcher::submit_interactive_session,
             invoke::launcher::hide_launcher,
+            invoke::launcher::resize_launcher,
             invoke::preferences::get_theme_preference
         ])
         .run(tauri::generate_context!());

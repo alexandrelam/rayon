@@ -24,6 +24,7 @@ const searchResult = (overrides: Partial<SearchResult> = {}): SearchResult => ({
   icon_path: null,
   kind: "command",
   owner_plugin_id: "builtin.hello",
+  starts_interactive_session: false,
   arguments: [],
   ...overrides,
 });
