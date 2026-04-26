@@ -55,9 +55,7 @@ describe("Launcher overflow handling", () => {
     );
 
     expect(
-      screen
-        .getByText(/https:\/\/example.com\/this\/is\/a\/very\/long\/footer\/message/)
-        .className,
+      screen.getByText(/https:\/\/example.com\/this\/is\/a\/very\/long\/footer\/message/).className,
     ).toContain("[overflow-wrap:anywhere]");
     expect(screen.getByText(/error:error:error/).className).toContain("[overflow-wrap:anywhere]");
     expect(screen.getByText(/--extremely-long-flag-name/).className).toContain(
