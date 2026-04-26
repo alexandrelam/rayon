@@ -22,7 +22,7 @@ plugin_id = "user.commands"
 id = "user.echo"
 title = "Echo"
 program = "/bin/echo"
-base_args = ["hello from rayon"]
+base_args = ["status"]
 ```
 
 Supported command fields:
