@@ -1,5 +1,4 @@
 mod github;
-mod hello;
 mod kill;
 mod maintenance;
 mod theme;
@@ -16,7 +15,6 @@ pub struct BuiltInDependencies {
 
 pub fn built_in_providers(deps: BuiltInDependencies) -> Vec<Arc<dyn CommandProvider>> {
     vec![
-        Arc::new(hello::HelloProvider),
         Arc::new(GitHubMyPrsProvider::new(deps.platform.clone())),
         Arc::new(kill::KillProvider::new(deps.platform)),
         Arc::new(maintenance::MaintenanceProvider),
@@ -29,9 +27,8 @@ pub fn built_in_providers(deps: BuiltInDependencies) -> Vec<Arc<dyn CommandProvi
 mod tests {
     use super::*;
     use rayon_core::CommandRegistry;
+    use rayon_types::CommandId;
     use rayon_types::ProcessMatch;
-    use rayon_types::{CommandExecutionRequest, CommandId};
-    use std::collections::HashMap;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -72,25 +69,6 @@ mod tests {
             platform: Arc::new(StubPlatform),
             theme_settings: Arc::new(ThemeSettingsStore::new(temp_theme_path("catalog"))),
         })
-    }
-
-    #[test]
-    fn hello_provider_registers_and_executes() {
-        let mut registry = CommandRegistry::new();
-        for provider in built_ins() {
-            registry.register_provider(provider).unwrap();
-        }
-
-        let results = registry.search_results_by_id();
-        assert!(results.contains_key("hello"));
-
-        let execution = registry
-            .execute(&CommandExecutionRequest {
-                command_id: CommandId::from("hello"),
-                arguments: HashMap::new(),
-            })
-            .unwrap();
-        assert_eq!(execution.output, "hello");
     }
 
     #[test]

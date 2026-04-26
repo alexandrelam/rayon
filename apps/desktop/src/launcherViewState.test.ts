@@ -3,12 +3,12 @@ import type { InteractiveSessionState, PendingExecution, SearchResult } from "./
 import { getLauncherViewState, isLauncherIdle, shouldRunSearch } from "./launcherViewState";
 
 const searchResult = (overrides: Partial<SearchResult> = {}): SearchResult => ({
-  id: "hello",
-  title: "Hello",
-  subtitle: "Built-in greeting",
+  id: "echo",
+  title: "Echo",
+  subtitle: "Run echo",
   icon_path: null,
   kind: "command",
-  owner_plugin_id: "builtin.hello",
+  owner_plugin_id: "user.commands",
   starts_interactive_session: false,
   arguments: [],
   ...overrides,

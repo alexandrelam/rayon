@@ -794,14 +794,6 @@ mod tests {
         fn commands(&self) -> Vec<CommandDefinition> {
             vec![
                 CommandDefinition {
-                    id: CommandId::from("hello"),
-                    title: "Hello".into(),
-                    subtitle: Some("Greet".into()),
-                    owner_plugin_id: "builtin.hello".into(),
-                    keywords: vec![String::from("greeting")],
-                    arguments: vec![],
-                },
-                CommandDefinition {
                     id: CommandId::from("echo"),
                     title: "Echo".into(),
                     subtitle: None,
@@ -1004,12 +996,12 @@ mod tests {
 
         let result = registry
             .execute(&CommandExecutionRequest {
-                command_id: CommandId::from("hello"),
+                command_id: CommandId::from("echo"),
                 arguments: HashMap::new(),
             })
             .unwrap();
 
-        assert_eq!(result.output, "ran:hello");
+        assert_eq!(result.output, "ran:echo");
     }
 
     #[test]
@@ -1032,7 +1024,7 @@ mod tests {
     #[test]
     fn aggregate_search_uses_shared_index_ids() {
         let launcher = build_launcher_service(vec![
-            String::from("hello"),
+            String::from("echo"),
             String::from("app:macos:com.example.arc"),
             String::from("bookmark:github"),
         ]);
@@ -1336,10 +1328,10 @@ mod tests {
         );
         let documents = index.last_documents.lock().unwrap();
 
-        assert_eq!(documents.len(), 5);
+        assert_eq!(documents.len(), 4);
         assert!(documents
             .iter()
-            .any(|document| document.id == CommandId::from("hello")));
+            .any(|document| document.id == CommandId::from("echo")));
         assert!(documents
             .iter()
             .any(|document| document.id == CommandId::from("app:macos:com.example.arc")));
