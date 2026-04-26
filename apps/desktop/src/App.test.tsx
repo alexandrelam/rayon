@@ -111,7 +111,7 @@ describe("App", () => {
     vi.mocked(launcherApi.searchInteractiveSession).mockResolvedValue(
       interactiveSession({ results: [] }),
     );
-    vi.mocked(tauriApp.getVersion).mockResolvedValue("0.2.0");
+    vi.mocked(tauriApp.getVersion).mockResolvedValue("0.3.0");
     vi.mocked(launcherApi.executeLauncherCommand).mockResolvedValue({
       kind: "completed",
       output: "done",
@@ -127,7 +127,7 @@ describe("App", () => {
     render(<App />);
 
     expect(await screen.findByText("Command Palette")).toBeTruthy();
-    expect(await screen.findByText("v0.2.0")).toBeTruthy();
+    expect(await screen.findByText("v0.3.0")).toBeTruthy();
     expect(screen.getByLabelText("Command search").getAttribute("placeholder")).toBe(
       "Type a command",
     );
@@ -143,7 +143,7 @@ describe("App", () => {
     await waitFor(() => {
       expect(tauriApp.getVersion).toHaveBeenCalled();
     });
-    expect(screen.queryByText("v0.2.0")).toBeNull();
+    expect(screen.queryByText("v0.3.0")).toBeNull();
   });
 
   it("navigates search results with the keyboard and executes the selected command", async () => {
