@@ -6,6 +6,7 @@ import {
   type CommandArgumentValue,
   type CommandInvocationResult,
   type InteractiveSessionState,
+  type InteractiveSessionSubmitResult,
   currentArgument,
   currentArgumentInputValue,
   type PendingExecution,
@@ -237,13 +238,32 @@ function App() {
       interactiveSession.results.find((result) => result.id === itemId) ??
       interactiveSession.results[selectedIndex];
     try {
-      const nextSession = await invoke<InteractiveSessionState>("submit_interactive_session", {
+      const response = await invoke<InteractiveSessionSubmitResult>("submit_interactive_session", {
         request: {
           session_id: interactiveSession.session_id,
           query,
           item_id: selectedResult.id,
         },
       });
+
+      if (response.kind === "completed") {
+        setExecutionResult(response.output);
+        setError("");
+        setPendingExecution(null);
+        setInteractiveSession(null);
+        setSelectedIndex(0);
+        void refreshThemePreference();
+
+        try {
+          await invoke("hide_launcher");
+          resetLauncher();
+        } catch (hideError) {
+          setError(hideError instanceof Error ? hideError.message : String(hideError));
+        }
+        return;
+      }
+
+      const nextSession = response.session;
       setInteractiveSession(nextSession);
       setSelectedIndex((currentIndex) => {
         if (nextSession.results.length === 0) {
@@ -261,7 +281,33 @@ function App() {
   }
 
   function interactiveResultKind(session: InteractiveSessionState): string {
-    return session.command_id === "kill" ? "Process" : "Option";
+    if (session.command_id === "kill") {
+      return "Process";
+    }
+    if (session.command_id === "github.my-prs") {
+      return "Pull Request";
+    }
+    return "Option";
+  }
+
+  function interactiveEmptyState(session: InteractiveSessionState): string {
+    if (session.command_id === "kill") {
+      return "No matching processes.";
+    }
+    if (session.command_id === "github.my-prs") {
+      return "No matching pull requests.";
+    }
+    return "No matching options.";
+  }
+
+  function interactiveSubmitHint(session: InteractiveSessionState): string {
+    if (session.command_id === "kill") {
+      return "Press Enter to terminate the selected process.";
+    }
+    if (session.command_id === "github.my-prs") {
+      return "Press Enter to open the selected pull request.";
+    }
+    return "Press Enter to continue.";
   }
 
   function moveSelection(direction: -1 | 1) {
@@ -535,7 +581,7 @@ function App() {
               <li className="result result-empty">No matches found.</li>
             ) : null}
             {interactiveSession?.results.length === 0 ? (
-              <li className="result result-empty">No matching processes.</li>
+              <li className="result result-empty">{interactiveEmptyState(interactiveSession)}</li>
             ) : null}
           </ul>
         ) : null}
@@ -549,7 +595,7 @@ function App() {
             ) : pendingExecution ? (
               <p className="muted">Press Enter to continue.</p>
             ) : interactiveSession ? (
-              <p className="muted">Press Enter to terminate the selected process.</p>
+              <p className="muted">{interactiveSubmitHint(interactiveSession)}</p>
             ) : null}
             {error ? <p className="error">{error}</p> : null}
           </section>

@@ -1,8 +1,10 @@
+mod github;
 mod hello;
 mod kill;
 mod maintenance;
 mod theme;
 
+use github::GitHubMyPrsProvider;
 use rayon_core::{AppPlatform, CommandProvider};
 use std::sync::Arc;
 pub use theme::{ThemeCommandProvider, ThemeSettingsStore};
@@ -15,6 +17,7 @@ pub struct BuiltInDependencies {
 pub fn built_in_providers(deps: BuiltInDependencies) -> Vec<Arc<dyn CommandProvider>> {
     vec![
         Arc::new(hello::HelloProvider),
+        Arc::new(GitHubMyPrsProvider::new(deps.platform.clone())),
         Arc::new(kill::KillProvider::new(deps.platform)),
         Arc::new(maintenance::MaintenanceProvider),
         Arc::new(ThemeCommandProvider::new(deps.theme_settings)),
@@ -112,5 +115,20 @@ mod tests {
         let results = registry.search_results_by_id();
 
         assert_eq!(results["theme.set"].id, CommandId::from("theme.set"));
+    }
+
+    #[test]
+    fn built_in_catalog_registers_github_command() {
+        let mut registry = CommandRegistry::new();
+        for provider in built_ins() {
+            registry.register_provider(provider).unwrap();
+        }
+
+        let results = registry.search_results_by_id();
+
+        assert_eq!(
+            results["github.my-prs"].id,
+            CommandId::from("github.my-prs")
+        );
     }
 }

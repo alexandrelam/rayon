@@ -2,7 +2,8 @@ use crate::{app::AppState, MAIN_WINDOW_LABEL};
 use rayon_core::APP_REINDEX_COMMAND_ID;
 use rayon_types::{
     CommandExecutionRequest, CommandInvocationResult, InteractiveSessionQueryRequest,
-    InteractiveSessionState, InteractiveSessionSubmitRequest, SearchResult,
+    InteractiveSessionState, InteractiveSessionSubmitRequest, InteractiveSessionSubmitResult,
+    SearchResult,
 };
 use tauri::{AppHandle, Manager};
 
@@ -45,7 +46,7 @@ pub fn search_interactive_session(
 pub fn submit_interactive_session(
     request: InteractiveSessionSubmitRequest,
     state: tauri::State<'_, AppState>,
-) -> Result<InteractiveSessionState, String> {
+) -> Result<InteractiveSessionSubmitResult, String> {
     state
         .read_launcher()
         .submit_interactive_session(&request)

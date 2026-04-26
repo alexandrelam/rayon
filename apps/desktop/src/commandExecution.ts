@@ -45,6 +45,10 @@ export type CommandInvocationResult =
   | { kind: "completed"; output: string }
   | { kind: "started_session"; session: InteractiveSessionState };
 
+export type InteractiveSessionSubmitResult =
+  | { kind: "updated_session"; session: InteractiveSessionState }
+  | { kind: "completed"; output: string };
+
 export type CommandArgumentValue =
   | { type: "string"; value: string }
   | { type: "boolean"; value: boolean };
