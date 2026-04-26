@@ -535,9 +535,10 @@ export function useLauncherController(): LauncherController {
       : interactiveSession
         ? interactiveSession.title
         : "Command Palette",
-    subtitle: pendingExecution && activeArgument
-      ? `${activeArgument.label}${activeArgument.required ? " · required" : " · optional"}`
-      : interactiveSession?.subtitle ?? null,
+    subtitle:
+      pendingExecution && activeArgument
+        ? `${activeArgument.label}${activeArgument.required ? " · required" : " · optional"}`
+        : (interactiveSession?.subtitle ?? null),
   };
 
   const argumentPanel: LauncherArgumentPanelViewModel | null =

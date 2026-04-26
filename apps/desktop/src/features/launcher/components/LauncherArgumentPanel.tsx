@@ -15,7 +15,9 @@ export function LauncherArgumentPanel({
         Step {currentStep} of {totalSteps}
       </p>
       <p className="m-0 text-sm text-[var(--muted)]">{flagLabel}</p>
-      {defaultValue ? <p className="m-0 text-sm text-[var(--muted)]">Default: {defaultValue}</p> : null}
+      {defaultValue ? (
+        <p className="m-0 text-sm text-[var(--muted)]">Default: {defaultValue}</p>
+      ) : null}
     </section>
   );
 }

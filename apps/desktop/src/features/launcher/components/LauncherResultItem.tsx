@@ -68,8 +68,7 @@ export function LauncherResultSkeleton({ index }: { index: number }) {
             <Skeleton
               className="h-4 rounded-full bg-[linear-gradient(180deg,rgba(255,255,255,0.88)_0%,rgba(223,233,244,0.92)_100%)]"
               style={{
-                width:
-                  index % 3 === 0 ? "13.5rem" : index % 3 === 1 ? "11.75rem" : "15rem",
+                width: index % 3 === 0 ? "13.5rem" : index % 3 === 1 ? "11.75rem" : "15rem",
               }}
             />
             <Skeleton className="h-5 w-[4.5rem] rounded-full bg-[linear-gradient(180deg,rgba(255,255,255,0.88)_0%,rgba(223,233,244,0.92)_100%)]" />
