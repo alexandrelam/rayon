@@ -115,7 +115,7 @@ plugin_id = "user.commands"
 id = "user.echo"
 title = "Echo"
 program = "/bin/echo"
-base_args = ["hello from Rayon"]
+base_args = ["status"]
 ```
 
 For the full manifest format and troubleshooting details:

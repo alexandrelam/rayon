@@ -349,7 +349,7 @@ mod tests {
                 SearchResultKind::Command,
                 "Hello",
                 None,
-                Some("builtin.hello"),
+                Some("user.commands"),
                 "hello greeting",
             )])
             .unwrap();
@@ -403,7 +403,7 @@ mod tests {
                 SearchResultKind::Command,
                 "Hello",
                 None,
-                Some("builtin.hello"),
+                Some("user.commands"),
                 "hello greeting",
             )])
             .unwrap();

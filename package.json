@@ -8,6 +8,7 @@
     "format": "pnpm exec biome format --write apps/desktop/src apps/desktop/vite.config.ts eslint.config.mjs",
     "format:check": "pnpm exec biome format --check apps/desktop/src apps/desktop/vite.config.ts eslint.config.mjs",
     "hooks:install": "pnpm exec lefthook install",
+    "setup": "pnpm install && cargo fetch --locked",
     "lint": "pnpm --dir apps/desktop lint && cargo clippy --workspace --all-targets -- -D warnings -W clippy::unwrap_used -W clippy::expect_used -W clippy::panic -W clippy::todo -W clippy::dbg_macro",
     "lint:audit": "pnpm --dir apps/desktop lint && cargo clippy --workspace --all-targets -- -W clippy::pedantic",
     "prepare": "pnpm run hooks:install",
