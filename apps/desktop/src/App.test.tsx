@@ -3,6 +3,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as tauriApp from "@tauri-apps/api/app";
 
 import App from "./App";
 import type {
@@ -11,6 +12,10 @@ import type {
   SearchResult,
 } from "./commandExecution";
 import * as launcherApi from "./features/launcher/api";
+
+vi.mock("@tauri-apps/api/app", () => ({
+  getVersion: vi.fn(),
+}));
 
 vi.mock("./features/launcher/api", () => ({
   executeLauncherCommand: vi.fn(),
@@ -106,6 +111,7 @@ describe("App", () => {
     vi.mocked(launcherApi.searchInteractiveSession).mockResolvedValue(
       interactiveSession({ results: [] }),
     );
+    vi.mocked(tauriApp.getVersion).mockResolvedValue("0.2.0");
     vi.mocked(launcherApi.executeLauncherCommand).mockResolvedValue({
       kind: "completed",
       output: "done",
@@ -121,10 +127,23 @@ describe("App", () => {
     render(<App />);
 
     expect(await screen.findByText("Command Palette")).toBeTruthy();
+    expect(await screen.findByText("v0.2.0")).toBeTruthy();
     expect(screen.getByLabelText("Command search").getAttribute("placeholder")).toBe(
       "Type a command",
     );
     expect(screen.queryByLabelText("Search results")).toBeNull();
+  });
+
+  it("renders without the version label when loading the app version fails", async () => {
+    vi.mocked(tauriApp.getVersion).mockRejectedValue(new Error("failed to read app version"));
+
+    render(<App />);
+
+    expect(await screen.findByText("Command Palette")).toBeTruthy();
+    await waitFor(() => {
+      expect(tauriApp.getVersion).toHaveBeenCalled();
+    });
+    expect(screen.queryByText("v0.2.0")).toBeNull();
   });
 
   it("navigates search results with the keyboard and executes the selected command", async () => {
