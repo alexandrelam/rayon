@@ -1,6 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { type KeyboardEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  type KeyboardEvent,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import {
   beginPendingExecution,
   type CommandArgumentValue,
@@ -644,7 +651,27 @@ function App() {
             {showInteractiveSkeleton
               ? Array.from({ length: 6 }, (_, index) => (
                   <li key={`skeleton-${String(index)}`}>
-                    <div className="result result-skeleton" aria-hidden="true">
+                    <div
+                      className="result result-skeleton"
+                      aria-hidden="true"
+                      style={
+                        {
+                          "--skeleton-delay": `${String(index * 90)}ms`,
+                          "--skeleton-title-width":
+                            index % 3 === 0
+                              ? "13.5rem"
+                              : index % 3 === 1
+                                ? "11.75rem"
+                                : "15rem",
+                          "--skeleton-meta-width":
+                            index % 3 === 0
+                              ? "17rem"
+                              : index % 3 === 1
+                                ? "13.5rem"
+                                : "19rem",
+                        } as CSSProperties
+                      }
+                    >
                       <span className="result-copy">
                         <span className="result-row">
                           <span className="result-title-skeleton" />
