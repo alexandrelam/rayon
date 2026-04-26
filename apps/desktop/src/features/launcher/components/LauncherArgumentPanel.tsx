@@ -9,14 +9,18 @@ export function LauncherArgumentPanel({
   return (
     <section
       aria-live="polite"
-      className="grid gap-1 rounded-[16px] border border-[var(--output-border)] bg-[var(--output-bg)] px-4 py-3"
+      className="grid min-w-0 gap-1 rounded-[16px] border border-[var(--output-border)] bg-[var(--output-bg)] px-4 py-3"
     >
       <p className="m-0 text-sm">
         Step {currentStep} of {totalSteps}
       </p>
-      <p className="m-0 text-sm text-[var(--muted)]">{flagLabel}</p>
+      <p className="m-0 min-w-0 text-sm text-[var(--muted)] [overflow-wrap:anywhere]">
+        {flagLabel}
+      </p>
       {defaultValue ? (
-        <p className="m-0 text-sm text-[var(--muted)]">Default: {defaultValue}</p>
+        <p className="m-0 min-w-0 text-sm text-[var(--muted)] [overflow-wrap:anywhere]">
+          Default: {defaultValue}
+        </p>
       ) : null}
     </section>
   );

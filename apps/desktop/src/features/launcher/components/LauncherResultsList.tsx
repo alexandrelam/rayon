@@ -17,8 +17,11 @@ export function LauncherResultsList({
   showInteractiveSkeleton: boolean;
 }) {
   return (
-    <ScrollArea className="max-h-[var(--results-max-height)] pr-1">
-      <ul aria-label="Search results" className="m-0 grid list-none gap-2 p-[2px_4px_4px_0]">
+    <ScrollArea className="min-w-0 max-h-[var(--results-max-height)] overflow-x-hidden pr-1">
+      <ul
+        aria-label="Search results"
+        className="m-0 grid min-w-0 list-none gap-2 overflow-x-hidden p-[2px_4px_4px_0]"
+      >
         {showInteractiveSkeleton
           ? Array.from({ length: 6 }, (_, index) => (
               <LauncherResultSkeleton key={`skeleton-${String(index)}`} index={index} />
@@ -34,7 +37,7 @@ export function LauncherResultsList({
               />
             ))}
         {emptyMessage ? (
-          <li className="flex min-h-12 items-center justify-center rounded-[14px] border border-[var(--result-border)] bg-[var(--result-bg)] px-[13px] py-[11px] text-[var(--empty)]">
+          <li className="flex min-h-12 min-w-0 items-center justify-center rounded-[14px] border border-[var(--result-border)] bg-[var(--result-bg)] px-[13px] py-[11px] text-[var(--empty)] [overflow-wrap:anywhere]">
             {emptyMessage}
           </li>
         ) : null}

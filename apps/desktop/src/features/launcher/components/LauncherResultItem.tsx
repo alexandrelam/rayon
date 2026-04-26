@@ -22,7 +22,7 @@ export function LauncherResultItem({
         ref={setRef}
         data-selected={item.selected}
         className={cn(
-          "h-auto min-h-12 w-full justify-between rounded-[14px] border border-[var(--result-border)] bg-[var(--result-bg)] px-[13px] py-[11px] text-left text-[var(--panel-foreground)] transition-[transform,border-color,background-color]",
+          "h-auto min-h-12 min-w-0 w-full whitespace-normal rounded-[14px] border border-[var(--result-border)] bg-[var(--result-bg)] px-[13px] py-[11px] text-left text-[var(--panel-foreground)] transition-[transform,border-color,background-color]",
           "hover:bg-white/65 active:scale-[0.998]",
           "data-[selected=true]:-translate-y-px data-[selected=true]:border-[var(--selected-border)] data-[selected=true]:bg-[var(--selected-bg)]",
         )}
@@ -33,12 +33,14 @@ export function LauncherResultItem({
           onSelect(item.id);
         }}
       >
-        <span className="grid min-w-0 flex-1 gap-[3px]">
-          <span className="flex items-center gap-2.5">
+        <span className="flex min-w-0 flex-1 items-start gap-2.5">
+          <span className="grid min-w-0 flex-1 gap-[3px]">
             <span className="truncate font-semibold">{item.title}</span>
-            <Badge>{item.kind}</Badge>
+            <span className="overflow-hidden text-[0.78rem] text-[var(--result-id)] [display:-webkit-box] [overflow-wrap:anywhere] [-webkit-box-orient:vertical] [-webkit-line-clamp:2]">
+              {item.meta}
+            </span>
           </span>
-          <span className="truncate text-[0.78rem] text-[var(--result-id)]">{item.meta}</span>
+          <Badge className="max-w-[7rem] shrink-0 truncate">{item.kind}</Badge>
         </span>
       </Button>
     </li>
