@@ -183,9 +183,7 @@ struct ThemeSettingsFile {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use rayon_types::CommandId;
     use std::path::PathBuf;
-    use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn temp_path(test_name: &str) -> PathBuf {

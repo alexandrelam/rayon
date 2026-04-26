@@ -1,15 +1,23 @@
 mod hello;
 mod kill;
 mod maintenance;
+mod theme;
 
 use rayon_core::{AppPlatform, CommandProvider};
 use std::sync::Arc;
+pub use theme::{ThemeCommandProvider, ThemeSettingsStore};
 
-pub fn built_in_providers(platform: Arc<dyn AppPlatform>) -> Vec<Arc<dyn CommandProvider>> {
+pub struct BuiltInDependencies {
+    pub platform: Arc<dyn AppPlatform>,
+    pub theme_settings: Arc<ThemeSettingsStore>,
+}
+
+pub fn built_in_providers(deps: BuiltInDependencies) -> Vec<Arc<dyn CommandProvider>> {
     vec![
         Arc::new(hello::HelloProvider),
-        Arc::new(kill::KillProvider::new(platform)),
+        Arc::new(kill::KillProvider::new(deps.platform)),
         Arc::new(maintenance::MaintenanceProvider),
+        Arc::new(ThemeCommandProvider::new(deps.theme_settings)),
     ]
 }
 
@@ -21,6 +29,8 @@ mod tests {
     use rayon_types::ProcessMatch;
     use rayon_types::{CommandExecutionRequest, CommandId};
     use std::collections::HashMap;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     struct StubPlatform;
 
@@ -46,10 +56,25 @@ mod tests {
         }
     }
 
+    fn temp_theme_path(test_name: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("rayon-features-theme-{test_name}-{unique}.json"))
+    }
+
+    fn built_ins() -> Vec<Arc<dyn CommandProvider>> {
+        built_in_providers(BuiltInDependencies {
+            platform: Arc::new(StubPlatform),
+            theme_settings: Arc::new(ThemeSettingsStore::new(temp_theme_path("catalog"))),
+        })
+    }
+
     #[test]
     fn hello_provider_registers_and_executes() {
         let mut registry = CommandRegistry::new();
-        for provider in built_in_providers(Arc::new(StubPlatform)) {
+        for provider in built_ins() {
             registry.register_provider(provider).unwrap();
         }
 
@@ -68,12 +93,24 @@ mod tests {
     #[test]
     fn maintenance_provider_registers_reindex_command() {
         let mut registry = CommandRegistry::new();
-        for provider in built_in_providers(Arc::new(StubPlatform)) {
+        for provider in built_ins() {
             registry.register_provider(provider).unwrap();
         }
 
         let results = registry.search_results_by_id();
 
         assert_eq!(results["apps.reindex"].id, CommandId::from("apps.reindex"));
+    }
+
+    #[test]
+    fn built_in_catalog_registers_theme_command() {
+        let mut registry = CommandRegistry::new();
+        for provider in built_ins() {
+            registry.register_provider(provider).unwrap();
+        }
+
+        let results = registry.search_results_by_id();
+
+        assert_eq!(results["theme.set"].id, CommandId::from("theme.set"));
     }
 }

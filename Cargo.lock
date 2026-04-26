@@ -3229,6 +3229,8 @@ version = "0.1.0"
 dependencies = [
  "rayon-core 0.1.0",
  "rayon-types",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
