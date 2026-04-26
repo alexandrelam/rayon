@@ -1,57 +1,142 @@
-# rayon
+# Rayon
 
-Keyboard-first desktop launcher built with Rust, Tauri, and React.
+<p align="center">
+  <img src="apps/desktop/src-tauri/icons/icon.png" alt="Rayon icon" width="96" height="96" />
+</p>
 
-## Goal
+<p align="center">
+  <strong>The open source launcher for macOS that stays fast, lightweight, and under your control.</strong>
+</p>
 
-`rayon` is moving toward a plugin-oriented launcher:
+<p align="center">
+  Rayon is a keyboard-first app launcher built for people who want the speed of modern launcher tools, the flexibility of local configuration, and a foundation that can grow through extensions and plugins.
+</p>
 
-- built-in modules and contributor plugins should use the same command model
-- searchable items should be indexed through Tantivy
-- the frontend should stay a thin shell over a generic backend API
+<p align="center">
+  <a href="https://github.com/alexandrelam/rayon/releases">Download for macOS</a>
+  ·
+  <a href="#build-from-source">Build from source</a>
+  ·
+  <a href="#configuration">Configure Rayon</a>
+</p>
 
-Current code is an early foundation: built-in providers are wired in statically, and Tantivy is currently used for app indexing only.
+> If you know Raycast, Rayon is aiming at a similar level of everyday usefulness with an open source, composable approach.
 
-## Layout
+## Demo
 
-- `apps/desktop`: Tauri shell and command palette UI
-- `crates/types`: shared models
-- `crates/core`: command registry and orchestration
-- `crates/features`: built-in providers
-- `crates/platform`: OS integration
-- `crates/db`: Tantivy-backed indexing
+![Rayon demo placeholder](docs/assets/rayon-demo-placeholder.svg)
 
-## Commands
-- `pnpm dev`: run the frontend dev server
-- `pnpm tauri dev`: run the desktop app
-- `cargo test`: run Rust tests across the workspace
+_Replace this image with a screenshot or GIF of the launcher in action._
 
-## Configurable Commands And Bookmarks
+## Why Rayon
 
-`rayon` can load user-defined commands and bookmarks from your config directory.
+- **Fast by default.** Rayon is built with Rust, Tauri, and React to keep the launcher responsive and lightweight.
+- **Keyboard first.** Open the launcher, search instantly, and trigger apps, bookmarks, or commands without leaving the keyboard.
+- **Configurable locally.** Add your own commands and bookmarks through TOML files in your home config directory.
+- **Composable foundation.** Built-in features and future extensions are designed around the same command model.
+- **Open source and hackable.** You can inspect the code, build it yourself, and shape how the launcher evolves.
 
-- See [Custom Commands](/Users/alex/Documents/rayon/docs/custom-commands.md) for command manifests and the agent-oriented command prompt shape.
-- See [Bookmarks](/Users/alex/Documents/rayon/docs/bookmarks.md) for bookmark manifests and the agent-oriented bookmark prompt shape.
+## Getting Started
 
-## macOS launcher shortcut
+### Install From GitHub Releases
 
-On macOS, `rayon` tries to register `Command+Space` as the launcher shortcut. That is the same default shortcut used by Spotlight, so pressing it can open both Spotlight and `rayon`.
+The easiest way to install Rayon on macOS is through the GitHub Releases page.
 
-### Fix the Spotlight conflict
+1. Open the [latest releases](https://github.com/alexandrelam/rayon/releases).
+2. Download the `.dmg` asset for the version you want.
+3. Open the disk image and drag Rayon into your `Applications` folder.
+4. Launch Rayon from `Applications`.
+
+### Launch Shortcut On macOS
+
+Rayon tries to register `Command+Space` as the launcher shortcut. macOS Spotlight uses the same shortcut by default, so you may need to change Spotlight first.
 
 1. Open `System Settings > Keyboard > Keyboard Shortcuts`.
-2. Open `Spotlight`.
-3. Disable `Show Spotlight search`, or change it to a different shortcut.
-4. Close System Settings and relaunch `rayon`.
+2. Select `Spotlight`.
+3. Disable `Show Spotlight search` or move it to a different shortcut.
+4. Relaunch Rayon.
 
-If `Command+Space` is still unavailable, `rayon` also tries `Command+Shift+Space` as a fallback.
+If `Command+Space` is unavailable, Rayon also tries `Command+Shift+Space` as a fallback.
 
-### Make only `rayon` appear
+## Build From Source
 
-`rayon` is already configured as an accessory-style macOS app:
+If you want to build Rayon yourself, the repository is set up for a straightforward local workflow.
 
-- it hides the Dock icon
-- it stays out of the taskbar
-- it opens as the launcher window only
+### Prerequisites
 
-If Spotlight still appears together with `rayon`, the issue is the macOS keyboard shortcut conflict above. Once Spotlight is disabled or remapped, pressing the `rayon` shortcut should only show the `rayon` launcher.
+- Rust toolchain
+- Node.js
+- `pnpm`
+- Tauri prerequisites for macOS
+
+### Development
+
+```bash
+pnpm install
+pnpm tauri dev
+```
+
+### Build And Check
+
+```bash
+pnpm build
+pnpm test
+cargo test --workspace
+```
+
+## Configuration
+
+Rayon can load user-defined commands and bookmarks from your config directory.
+
+Config files live in:
+
+- `$XDG_CONFIG_HOME/rayon` when `XDG_CONFIG_HOME` is set
+- `~/.config/rayon` otherwise
+
+Example bookmark manifest:
+
+```toml
+plugin_id = "user.bookmarks"
+
+[[bookmarks]]
+id = "user.github"
+title = "GitHub"
+url = "https://github.com"
+subtitle = "Code hosting"
+keywords = ["git", "repos", "source"]
+```
+
+Example custom command manifest:
+
+```toml
+plugin_id = "user.commands"
+
+[[commands]]
+id = "user.echo"
+title = "Echo"
+program = "/bin/echo"
+base_args = ["hello from Rayon"]
+```
+
+For the full manifest format and troubleshooting details:
+
+- [Custom Commands](docs/custom-commands.md)
+- [Bookmarks](docs/bookmarks.md)
+
+## Architecture Direction
+
+Rayon already supports built-in actions, app discovery, bookmarks, and config-driven commands. The project is also being shaped toward a more composable extension model, where built-in features and contributor plugins can register through the same backend contract over time.
+
+That direction is still in progress today, so the plugin story should be read as the product direction rather than a fully general runtime that is already complete.
+
+## Contributing
+
+Contributions are welcome.
+
+- Open an issue if you find a bug, want to propose a workflow improvement, or want to discuss a feature direction.
+- Open a pull request if you want to improve the launcher, configuration system, or platform integration.
+- Read [docs/project-structure.md](docs/project-structure.md) if you want a quick map of the workspace before making deeper changes.
+
+## License
+
+Rayon is released under the GNU Affero General Public License v3.0 (AGPL-3.0).
