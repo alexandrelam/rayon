@@ -33,7 +33,7 @@ impl GitHubMyPrsProvider {
         &self,
         session: &InteractiveSessionMetadata,
     ) -> Result<Vec<GitHubPullRequest>, CommandError> {
-        let mut session_prs = self
+        let session_prs = self
             .session_prs
             .lock()
             .map_err(|_| CommandError::ExecutionFailed("GitHub PR cache lock poisoned".into()))?;
@@ -41,11 +41,20 @@ impl GitHubMyPrsProvider {
         if let Some(prs) = session_prs.get(&session.session_id) {
             return Ok(prs.clone());
         }
+        drop(session_prs);
 
         let prs = self
             .cli
             .search_my_open_prs()
             .map_err(CommandError::ExecutionFailed)?;
+
+        let mut session_prs = self
+            .session_prs
+            .lock()
+            .map_err(|_| CommandError::ExecutionFailed("GitHub PR cache lock poisoned".into()))?;
+        if let Some(cached_prs) = session_prs.get(&session.session_id) {
+            return Ok(cached_prs.clone());
+        }
         session_prs.insert(session.session_id.clone(), prs.clone());
         Ok(prs)
     }

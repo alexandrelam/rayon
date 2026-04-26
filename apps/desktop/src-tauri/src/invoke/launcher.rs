@@ -5,52 +5,61 @@ use rayon_types::{
     InteractiveSessionState, InteractiveSessionSubmitRequest, InteractiveSessionSubmitResult,
     SearchResult,
 };
+use std::sync::Arc;
 use tauri::{AppHandle, LogicalSize, Manager, Size};
 
 #[tauri::command]
-pub fn search(query: String, state: tauri::State<'_, AppState>) -> Vec<SearchResult> {
-    state.read_launcher().search(&query)
+pub async fn search(
+    query: String,
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<Vec<SearchResult>, String> {
+    let state = Arc::clone(state.inner());
+    tauri::async_runtime::spawn_blocking(move || state.search(&query))
+        .await
+        .map_err(|error| format!("launcher task failed: {error}"))
 }
 
 #[tauri::command]
-pub fn execute_command(
+pub async fn execute_command(
     request: CommandExecutionRequest,
-    state: tauri::State<'_, AppState>,
+    state: tauri::State<'_, Arc<AppState>>,
 ) -> Result<CommandInvocationResult, String> {
+    let state = Arc::clone(state.inner());
+
     if request.command_id.as_str() == APP_REINDEX_COMMAND_ID {
-        return state
-            .reload()
+        return tauri::async_runtime::spawn_blocking(move || state.reload())
+            .await
+            .map_err(|error| format!("launcher task failed: {error}"))?
             .map(|result| CommandInvocationResult::Completed {
                 output: result.output,
             });
     }
 
-    state
-        .read_launcher()
-        .execute_command(&request)
-        .map_err(|error| error.to_string())
+    tauri::async_runtime::spawn_blocking(move || state.execute_command(&request))
+        .await
+        .map_err(|error| format!("launcher task failed: {error}"))?
 }
 
 #[tauri::command]
-pub fn search_interactive_session(
+pub async fn search_interactive_session(
     request: InteractiveSessionQueryRequest,
-    state: tauri::State<'_, AppState>,
+    state: tauri::State<'_, Arc<AppState>>,
 ) -> Result<InteractiveSessionState, String> {
-    state
-        .read_launcher()
-        .search_interactive_session(&request)
-        .map_err(|error| error.to_string())
+    let state = Arc::clone(state.inner());
+    tauri::async_runtime::spawn_blocking(move || state.search_interactive_session(&request))
+        .await
+        .map_err(|error| format!("launcher task failed: {error}"))?
 }
 
 #[tauri::command]
-pub fn submit_interactive_session(
+pub async fn submit_interactive_session(
     request: InteractiveSessionSubmitRequest,
-    state: tauri::State<'_, AppState>,
+    state: tauri::State<'_, Arc<AppState>>,
 ) -> Result<InteractiveSessionSubmitResult, String> {
-    state
-        .read_launcher()
-        .submit_interactive_session(&request)
-        .map_err(|error| error.to_string())
+    let state = Arc::clone(state.inner());
+    tauri::async_runtime::spawn_blocking(move || state.submit_interactive_session(&request))
+        .await
+        .map_err(|error| format!("launcher task failed: {error}"))?
 }
 
 #[tauri::command]

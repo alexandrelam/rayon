@@ -68,6 +68,9 @@ export type PendingExecutionStep =
   | { kind: "advance"; pendingExecution: PendingExecution }
   | { kind: "execute"; commandId: string; argumentsMap: Record<string, CommandArgumentValue> };
 
+type FrameScheduler = (callback: () => void) => void;
+type TaskScheduler = (callback: () => void) => void;
+
 export function beginPendingExecution(result: SearchResult): PendingExecution | null {
   if (result.kind !== "command" || result.arguments.length === 0) {
     return null;
@@ -171,6 +174,24 @@ export function resolvePendingExecutionStep(
   }
 
   return buildPendingExecutionStep(pendingExecution, nextValues);
+}
+
+export function scheduleAfterNextPaint(
+  callback: () => void,
+  scheduleFrame: FrameScheduler = (nextCallback) => {
+    requestAnimationFrame(() => {
+      nextCallback();
+    });
+  },
+  scheduleTask: TaskScheduler = (nextCallback) => {
+    setTimeout(() => {
+      nextCallback();
+    }, 0);
+  },
+) {
+  scheduleFrame(() => {
+    scheduleTask(callback);
+  });
 }
 
 function buildPendingExecutionStep(

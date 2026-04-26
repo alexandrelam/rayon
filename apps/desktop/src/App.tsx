@@ -11,6 +11,7 @@ import {
   currentArgumentInputValue,
   type PendingExecution,
   resolvePendingExecutionStep,
+  scheduleAfterNextPaint,
   type SearchResult,
 } from "./commandExecution";
 import "./App.css";
@@ -280,7 +281,9 @@ function App() {
       requestAnimationFrame(() => {
         inputRef.current?.focus();
       });
-      await executeCommand(result.id, {}, optimisticSession.session_id);
+      scheduleAfterNextPaint(() => {
+        void executeCommand(result.id, {}, optimisticSession.session_id);
+      });
       return;
     }
 

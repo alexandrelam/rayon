@@ -3,7 +3,11 @@ use rayon_core::{AppPlatform, LauncherService, SearchIndex};
 use rayon_db::TantivySearchIndex;
 use rayon_features::ThemeSettingsStore;
 use rayon_platform::MacOsAppManager;
-use rayon_types::CommandExecutionResult;
+use rayon_types::{
+    CommandExecutionRequest, CommandExecutionResult, CommandInvocationResult,
+    InteractiveSessionQueryRequest, InteractiveSessionState, InteractiveSessionSubmitRequest,
+    InteractiveSessionSubmitResult, SearchResult,
+};
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use tauri::AppHandle;
 
@@ -42,6 +46,37 @@ impl AppState {
             self.search_index.clone(),
             self.theme_settings.clone(),
         )
+    }
+
+    pub fn search(&self, query: &str) -> Vec<SearchResult> {
+        self.read_launcher().search(query)
+    }
+
+    pub fn execute_command(
+        &self,
+        request: &CommandExecutionRequest,
+    ) -> Result<CommandInvocationResult, String> {
+        self.read_launcher()
+            .execute_command(request)
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn search_interactive_session(
+        &self,
+        request: &InteractiveSessionQueryRequest,
+    ) -> Result<InteractiveSessionState, String> {
+        self.read_launcher()
+            .search_interactive_session(request)
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn submit_interactive_session(
+        &self,
+        request: &InteractiveSessionSubmitRequest,
+    ) -> Result<InteractiveSessionSubmitResult, String> {
+        self.read_launcher()
+            .submit_interactive_session(request)
+            .map_err(|error| error.to_string())
     }
 
     pub fn read_launcher(&self) -> RwLockReadGuard<'_, LauncherService> {
