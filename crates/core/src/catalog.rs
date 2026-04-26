@@ -1,8 +1,8 @@
 use rayon_db::{SearchIndexStats, TantivySearchIndex};
 use rayon_platform::MacOsAppManager;
 use rayon_types::{
-    BookmarkDefinition, CommandId, InstalledApp, ProcessMatch, SearchResult, SearchResultKind,
-    SearchableItemDocument,
+    BookmarkDefinition, CommandId, CommandInputMode, InstalledApp, ProcessMatch, SearchResult,
+    SearchResultKind, SearchableItemDocument,
 };
 use std::collections::HashMap;
 
@@ -102,7 +102,9 @@ impl AppCatalog {
                         icon_path: None,
                         kind: SearchResultKind::Application,
                         owner_plugin_id: None,
+                        keywords: Vec::new(),
                         starts_interactive_session: false,
+                        input_mode: CommandInputMode::Structured,
                         arguments: Vec::new(),
                     },
                 )
@@ -143,7 +145,9 @@ impl BookmarkCatalog {
                         icon_path: None,
                         kind: SearchResultKind::Bookmark,
                         owner_plugin_id: Some(bookmark.owner_plugin_id.clone()),
+                        keywords: Vec::new(),
                         starts_interactive_session: false,
+                        input_mode: CommandInputMode::Structured,
                         arguments: Vec::new(),
                     },
                 )

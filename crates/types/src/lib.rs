@@ -41,6 +41,14 @@ pub enum CommandArgumentType {
     Boolean,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandInputMode {
+    #[default]
+    Structured,
+    RawArgv,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "value", rename_all = "snake_case")]
 pub enum CommandArgumentValue {
@@ -89,6 +97,8 @@ pub struct CommandDefinition {
     #[serde(default)]
     pub keywords: Vec<String>,
     #[serde(default)]
+    pub input_mode: CommandInputMode,
+    #[serde(default)]
     pub arguments: Vec<CommandArgumentDefinition>,
 }
 
@@ -113,7 +123,11 @@ pub struct SearchResult {
     pub kind: SearchResultKind,
     pub owner_plugin_id: Option<String>,
     #[serde(default)]
+    pub keywords: Vec<String>,
+    #[serde(default)]
     pub starts_interactive_session: bool,
+    #[serde(default)]
+    pub input_mode: CommandInputMode,
     #[serde(default)]
     pub arguments: Vec<CommandArgumentDefinition>,
 }
@@ -121,6 +135,8 @@ pub struct SearchResult {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommandExecutionRequest {
     pub command_id: CommandId,
+    #[serde(default)]
+    pub argv: Vec<String>,
     #[serde(default)]
     pub arguments: HashMap<String, CommandArgumentValue>,
 }

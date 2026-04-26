@@ -195,7 +195,9 @@ impl CommandRegistry {
                         icon_path: None,
                         kind: SearchResultKind::Command,
                         owner_plugin_id: Some(command.definition.owner_plugin_id.clone()),
+                        keywords: command.definition.keywords.clone(),
                         starts_interactive_session: command.starts_interactive_session,
+                        input_mode: command.definition.input_mode,
                         arguments: command.definition.arguments.clone(),
                     },
                 )
@@ -262,6 +264,7 @@ mod tests {
         let result = registry
             .execute(&CommandExecutionRequest {
                 command_id: CommandId::from("echo"),
+                argv: Vec::new(),
                 arguments: HashMap::new(),
             })
             .unwrap();
@@ -276,6 +279,7 @@ mod tests {
         let error = registry
             .execute(&CommandExecutionRequest {
                 command_id: CommandId::from("missing"),
+                argv: Vec::new(),
                 arguments: HashMap::new(),
             })
             .unwrap_err();

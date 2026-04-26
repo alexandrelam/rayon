@@ -37,6 +37,7 @@ fn execute_routes_app_ids_to_platform_launcher() {
     let result = launcher
         .execute_command(&CommandExecutionRequest {
             command_id: CommandId::from("app:macos:com.example.arc"),
+            argv: Vec::new(),
             arguments: HashMap::new(),
         })
         .unwrap();
@@ -57,6 +58,7 @@ fn execute_reindexes_shared_search_items() {
     let result = launcher
         .execute_command(&CommandExecutionRequest {
             command_id: CommandId::from(APP_REINDEX_COMMAND_ID),
+            argv: Vec::new(),
             arguments: HashMap::new(),
         })
         .unwrap();
@@ -77,6 +79,7 @@ fn execute_routes_bookmark_ids_to_platform_url_opener() {
     let result = launcher
         .execute_command(&CommandExecutionRequest {
             command_id: CommandId::from("bookmark:github"),
+            argv: Vec::new(),
             arguments: HashMap::new(),
         })
         .unwrap();
@@ -97,6 +100,7 @@ fn execute_starts_interactive_session_for_kill() {
     let result = launcher
         .execute_command(&CommandExecutionRequest {
             command_id: CommandId::from("kill"),
+            argv: Vec::new(),
             arguments: HashMap::new(),
         })
         .unwrap();
@@ -122,6 +126,7 @@ fn interactive_session_search_and_submit_route_to_provider() {
     let session_result = launcher
         .execute_command(&CommandExecutionRequest {
             command_id: CommandId::from("kill"),
+            argv: Vec::new(),
             arguments: HashMap::new(),
         })
         .unwrap();
@@ -188,6 +193,7 @@ fn completed_interactive_submit_removes_active_session() {
     let session_result = launcher
         .execute_command(&CommandExecutionRequest {
             command_id: CommandId::from("github.my-prs"),
+            argv: Vec::new(),
             arguments: HashMap::new(),
         })
         .unwrap();

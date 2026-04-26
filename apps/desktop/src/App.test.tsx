@@ -44,7 +44,9 @@ const searchResult = (overrides: Partial<SearchResult> = {}): SearchResult => ({
   icon_path: null,
   kind: "command",
   owner_plugin_id: "user.commands",
+  keywords: [],
   starts_interactive_session: false,
+  input_mode: "structured",
   arguments: [],
   ...overrides,
 });
@@ -163,7 +165,7 @@ describe("App", () => {
     await userEvent.keyboard("{ArrowUp}{Enter}");
 
     await waitFor(() => {
-      expect(launcherApi.executeLauncherCommand).toHaveBeenCalledWith("beta", {});
+      expect(launcherApi.executeLauncherCommand).toHaveBeenCalledWith("beta", {}, []);
     });
   });
 
@@ -206,13 +208,83 @@ describe("App", () => {
     await userEvent.keyboard("{Enter}");
 
     await waitFor(() => {
-      expect(launcherApi.executeLauncherCommand).toHaveBeenCalledWith("apps.reindex", {
-        enabled: {
-          type: "boolean",
-          value: true,
+      expect(launcherApi.executeLauncherCommand).toHaveBeenCalledWith(
+        "apps.reindex",
+        {
+          enabled: {
+            type: "boolean",
+            value: true,
+          },
         },
-      });
+        [],
+      );
     });
+  });
+
+  it("executes structured commands directly for exact keyword aliases when args are already satisfiable", async () => {
+    vi.mocked(launcherApi.searchLauncher).mockResolvedValue([
+      searchResult({
+        id: "user.teleport",
+        title: "Teleport",
+        keywords: ["tp"],
+        arguments: [
+          {
+            id: "profile",
+            label: "Profile",
+            argument_type: "string",
+            required: true,
+            flag: "--profile",
+            positional: null,
+            default_value: { type: "string", value: "default" },
+          },
+        ],
+      }),
+    ]);
+
+    render(<App />);
+
+    const input = screen.getByLabelText("Command search");
+    fireEvent.change(input, { target: { value: "tp" } });
+
+    expect(await screen.findByText("Teleport")).toBeTruthy();
+    await userEvent.keyboard("{Enter}");
+
+    await waitFor(() => {
+      expect(launcherApi.executeLauncherCommand).toHaveBeenCalledWith("user.teleport", {}, []);
+    });
+    expect(screen.queryByText("Step 1 of 1")).toBeNull();
+  });
+
+  it("keeps the structured prompt for exact aliases when required args still need input", async () => {
+    vi.mocked(launcherApi.searchLauncher).mockResolvedValue([
+      searchResult({
+        id: "user.teleport",
+        title: "Teleport",
+        keywords: ["tp"],
+        arguments: [
+          {
+            id: "path",
+            label: "Path",
+            argument_type: "string",
+            required: true,
+            flag: null,
+            positional: 0,
+            default_value: null,
+          },
+        ],
+      }),
+    ]);
+
+    render(<App />);
+
+    const input = screen.getByLabelText("Command search");
+    fireEvent.change(input, { target: { value: "tp" } });
+
+    expect(await screen.findByText("Teleport")).toBeTruthy();
+    await userEvent.keyboard("{Enter}");
+
+    expect(await screen.findByText("Step 1 of 1")).toBeTruthy();
+    expect(launcherApi.executeLauncherCommand).not.toHaveBeenCalledWith("user.teleport", {}, []);
   });
 
   it("shows the interactive loading state and submits the selected item", async () => {
@@ -259,5 +331,56 @@ describe("App", () => {
     await waitFor(() => {
       expect(launcherApi.hideLauncher).toHaveBeenCalled();
     });
+  });
+
+  it("executes raw argv commands directly from one line", async () => {
+    vi.mocked(launcherApi.searchLauncher)
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        searchResult({
+          id: "user.git-status",
+          title: "Git Status",
+          subtitle: "Run git status",
+          input_mode: "raw_argv",
+        }),
+      ]);
+
+    render(<App />);
+
+    const input = screen.getByLabelText("Command search");
+    fireEvent.change(input, { target: { value: 'git status "/tmp/my repo"' } });
+
+    expect(await screen.findByText("Git Status")).toBeTruthy();
+    expect(screen.queryByText("Step 1 of 1")).toBeNull();
+
+    await userEvent.keyboard("{Enter}");
+
+    await waitFor(() => {
+      expect(launcherApi.executeLauncherCommand).toHaveBeenCalledWith("user.git-status", {}, [
+        "/tmp/my repo",
+      ]);
+    });
+  });
+
+  it("blocks raw argv execution when the input has an unclosed quote", async () => {
+    vi.mocked(launcherApi.searchLauncher).mockResolvedValue([
+      searchResult({
+        id: "user.echo",
+        title: "Echo",
+        subtitle: "Run echo",
+        input_mode: "raw_argv",
+      }),
+    ]);
+
+    render(<App />);
+
+    const input = screen.getByLabelText("Command search");
+    fireEvent.change(input, { target: { value: 'echo "hello' } });
+
+    expect(await screen.findByText("Echo")).toBeTruthy();
+    await userEvent.keyboard("{Enter}");
+
+    expect(await screen.findByText("Command input contains an unclosed quote.")).toBeTruthy();
+    expect(launcherApi.executeLauncherCommand).not.toHaveBeenCalledWith("user.echo", {}, []);
   });
 });

@@ -1,7 +1,7 @@
 use rayon_core::{AppPlatform, CommandError, CommandProvider, InteractiveSessionSubmitOutcome};
 use rayon_types::{
     CommandDefinition, CommandExecutionRequest, CommandExecutionResult, CommandId,
-    InteractiveSessionMetadata, InteractiveSessionResult,
+    CommandInputMode, InteractiveSessionMetadata, InteractiveSessionResult,
 };
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -73,6 +73,7 @@ impl CommandProvider for GitHubMyPrsProvider {
                 "pr".into(),
                 "pull request".into(),
             ],
+            input_mode: CommandInputMode::Structured,
             arguments: Vec::new(),
         }]
     }

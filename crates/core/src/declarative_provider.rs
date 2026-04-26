@@ -2,7 +2,7 @@ use crate::config::manifest::ManifestCommand;
 use crate::{CommandError, CommandProvider};
 use rayon_types::{
     CommandArgumentDefinition, CommandArgumentType, CommandArgumentValue, CommandDefinition,
-    CommandExecutionRequest, CommandExecutionResult,
+    CommandExecutionRequest, CommandExecutionResult, CommandInputMode,
 };
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -82,6 +82,26 @@ impl ExecutableCommandSpec {
         &self,
         request: &CommandExecutionRequest,
     ) -> Result<CommandExecutionResult, CommandError> {
+        if self.definition.input_mode == CommandInputMode::RawArgv {
+            return self.execute_raw_argv(request);
+        }
+
+        self.execute_structured(request)
+    }
+
+    fn execute_raw_argv(
+        &self,
+        request: &CommandExecutionRequest,
+    ) -> Result<CommandExecutionResult, CommandError> {
+        let mut argv = self.base_args.clone();
+        argv.extend(request.argv.clone());
+        self.run_command(argv)
+    }
+
+    fn execute_structured(
+        &self,
+        request: &CommandExecutionRequest,
+    ) -> Result<CommandExecutionResult, CommandError> {
         let mut argv = self.base_args.clone();
         let mut positional_values: BTreeMap<usize, String> = BTreeMap::new();
 
@@ -127,6 +147,10 @@ impl ExecutableCommandSpec {
             argv.push(positional_value);
         }
 
+        self.run_command(argv)
+    }
+
+    fn run_command(&self, argv: Vec<String>) -> Result<CommandExecutionResult, CommandError> {
         let mut command = Command::new(&self.program);
         command.args(&argv);
         if let Some(working_dir) = &self.working_dir {
@@ -187,5 +211,51 @@ fn resolve_path(base_dir: &Path, raw_path: &str) -> PathBuf {
         path
     } else {
         base_dir.join(path)
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use rayon_types::{CommandExecutionRequest, CommandId};
+
+    #[test]
+    fn raw_argv_commands_append_request_argv_after_base_args() {
+        let definition = CommandDefinition {
+            id: CommandId::from("user.echo"),
+            title: "Echo".into(),
+            subtitle: None,
+            owner_plugin_id: "user.commands".into(),
+            keywords: vec!["echo".into()],
+            input_mode: CommandInputMode::RawArgv,
+            arguments: vec![],
+        };
+        let spec = ExecutableCommandSpec::from_manifest_command(
+            Path::new("/tmp"),
+            &definition,
+            ManifestCommand {
+                id: "user.echo".into(),
+                title: "Echo".into(),
+                subtitle: None,
+                keywords: Some(vec!["echo".into()]),
+                input_mode: CommandInputMode::RawArgv,
+                program: "/bin/echo".into(),
+                base_args: Some(vec!["hello".into()]),
+                working_dir: None,
+                env: None,
+                arguments: None,
+            },
+        );
+
+        let result = spec
+            .execute(&CommandExecutionRequest {
+                command_id: CommandId::from("user.echo"),
+                argv: vec!["world".into(), "again".into()],
+                arguments: HashMap::new(),
+            })
+            .unwrap();
+
+        assert_eq!(result.output, "hello world again");
     }
 }

@@ -2,8 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   beginPendingExecution,
   currentArgumentInputValue,
+  parseCommandLine,
   type PendingExecution,
+  resolveInlineArgv,
   resolvePendingExecutionStep,
+  resolveStructuredDirectExecution,
   scheduleAfterNextPaint,
   type SearchResult,
 } from "./commandExecution";
@@ -25,14 +28,25 @@ const searchResult = (overrides: Partial<SearchResult> = {}): SearchResult => ({
   icon_path: null,
   kind: "command",
   owner_plugin_id: "user.commands",
+  keywords: [],
   starts_interactive_session: false,
+  input_mode: "structured",
   arguments: [],
   ...overrides,
 });
 
 describe("commandExecution helpers", () => {
-  it("only starts pending execution for commands with arguments", () => {
+  it("only starts pending execution for structured commands with arguments", () => {
     expect(beginPendingExecution(searchResult())).toBeNull();
+
+    expect(
+      beginPendingExecution(
+        searchResult({
+          input_mode: "raw_argv",
+          arguments: [toggleArgument],
+        }),
+      ),
+    ).toBeNull();
 
     expect(
       beginPendingExecution(
@@ -126,6 +140,101 @@ describe("commandExecution helpers", () => {
           value: true,
         },
       },
+    });
+  });
+
+  it("parses shell-style command lines", () => {
+    expect(parseCommandLine('echo "hello world" path\\ with\\ spaces')).toEqual({
+      kind: "success",
+      tokens: ["echo", "hello world", "path with spaces"],
+    });
+  });
+
+  it("returns a parsing error for an unclosed quote", () => {
+    expect(parseCommandLine('echo "hello')).toEqual({
+      kind: "error",
+      message: "Command input contains an unclosed quote.",
+    });
+  });
+
+  it("derives inline argv for raw custom commands", () => {
+    expect(
+      resolveInlineArgv(
+        searchResult({
+          title: "Git Status",
+          input_mode: "raw_argv",
+        }),
+        'git status "/tmp/my repo"',
+      ),
+    ).toEqual({
+      argv: ["/tmp/my repo"],
+      error: null,
+    });
+  });
+
+  it("allows direct execution for exact structured keyword aliases when defaults satisfy args", () => {
+    expect(
+      resolveStructuredDirectExecution(
+        searchResult({
+          title: "Teleport",
+          keywords: ["tp"],
+          arguments: [
+            {
+              id: "profile",
+              label: "Profile",
+              argument_type: "string",
+              required: true,
+              flag: "--profile",
+              positional: null,
+              default_value: { type: "string", value: "default" },
+            },
+          ],
+        }),
+        "tp",
+      ),
+    ).toEqual({
+      canExecute: true,
+      matchesExactAlias: true,
+    });
+  });
+
+  it("keeps the prompt for exact structured aliases when a required arg has no default", () => {
+    expect(
+      resolveStructuredDirectExecution(
+        searchResult({
+          keywords: ["tp"],
+          arguments: [
+            {
+              id: "path",
+              label: "Path",
+              argument_type: "string",
+              required: true,
+              flag: null,
+              positional: 0,
+              default_value: null,
+            },
+          ],
+        }),
+        "tp",
+      ),
+    ).toEqual({
+      canExecute: false,
+      matchesExactAlias: true,
+    });
+  });
+
+  it("does not treat partial structured queries as direct-run aliases", () => {
+    expect(
+      resolveStructuredDirectExecution(
+        searchResult({
+          title: "Teleport Project",
+          keywords: ["tp"],
+        }),
+        "tele",
+      ),
+    ).toEqual({
+      canExecute: false,
+      matchesExactAlias: false,
     });
   });
 

@@ -1,4 +1,5 @@
 export type CommandArgumentType = "string" | "boolean";
+export type CommandInputMode = "structured" | "raw_argv";
 
 export type CommandArgumentDefinition = {
   id: string;
@@ -17,7 +18,9 @@ export type SearchResult = {
   icon_path: string | null;
   kind: "command" | "application" | "bookmark";
   owner_plugin_id: string | null;
+  keywords: string[];
   starts_interactive_session: boolean;
+  input_mode: CommandInputMode;
   arguments: CommandArgumentDefinition[];
 };
 
@@ -68,11 +71,24 @@ export type PendingExecutionStep =
   | { kind: "advance"; pendingExecution: PendingExecution }
   | { kind: "execute"; commandId: string; argumentsMap: Record<string, CommandArgumentValue> };
 
+export type ParsedCommandLine =
+  | { kind: "success"; tokens: string[] }
+  | { kind: "error"; message: string };
+
+export type StructuredDirectExecution = {
+  canExecute: boolean;
+  matchesExactAlias: boolean;
+};
+
 type FrameScheduler = (callback: () => void) => void;
 type TaskScheduler = (callback: () => void) => void;
 
 export function beginPendingExecution(result: SearchResult): PendingExecution | null {
-  if (result.kind !== "command" || result.arguments.length === 0) {
+  if (
+    result.kind !== "command" ||
+    result.input_mode !== "structured" ||
+    result.arguments.length === 0
+  ) {
     return null;
   }
 
@@ -176,6 +192,37 @@ export function resolvePendingExecutionStep(
   return buildPendingExecutionStep(pendingExecution, nextValues);
 }
 
+export function resolveStructuredDirectExecution(
+  result: SearchResult,
+  query: string,
+): StructuredDirectExecution {
+  if (
+    result.kind !== "command" ||
+    result.input_mode !== "structured" ||
+    result.starts_interactive_session
+  ) {
+    return {
+      canExecute: false,
+      matchesExactAlias: false,
+    };
+  }
+
+  const matchesExactAlias = isExactCommandAliasMatch(result, query);
+  if (!matchesExactAlias) {
+    return {
+      canExecute: false,
+      matchesExactAlias,
+    };
+  }
+
+  return {
+    canExecute: result.arguments.every((argument) => {
+      return !argument.required || argument.default_value !== null;
+    }),
+    matchesExactAlias,
+  };
+}
+
 export function scheduleAfterNextPaint(
   callback: () => void,
   scheduleFrame: FrameScheduler = (nextCallback) => {
@@ -192,6 +239,108 @@ export function scheduleAfterNextPaint(
   scheduleFrame(() => {
     scheduleTask(callback);
   });
+}
+
+export function parseCommandLine(query: string): ParsedCommandLine {
+  const tokens: string[] = [];
+  let current = "";
+  let quote: "'" | '"' | null = null;
+  let escaping = false;
+
+  for (const character of query) {
+    if (escaping) {
+      current += character;
+      escaping = false;
+      continue;
+    }
+
+    if (quote === "'") {
+      if (character === "'") {
+        quote = null;
+      } else {
+        current += character;
+      }
+      continue;
+    }
+
+    if (quote === '"') {
+      if (character === '"') {
+        quote = null;
+        continue;
+      }
+      if (character === "\\") {
+        escaping = true;
+        continue;
+      }
+      current += character;
+      continue;
+    }
+
+    if (character === "\\") {
+      escaping = true;
+      continue;
+    }
+
+    if (character === "'" || character === '"') {
+      quote = character;
+      continue;
+    }
+
+    if (/\s/.test(character)) {
+      if (current !== "") {
+        tokens.push(current);
+        current = "";
+      }
+      continue;
+    }
+
+    current += character;
+  }
+
+  if (escaping) {
+    return {
+      kind: "error",
+      message: "Command input ends with an unfinished escape sequence.",
+    };
+  }
+
+  if (quote) {
+    return {
+      kind: "error",
+      message: "Command input contains an unclosed quote.",
+    };
+  }
+
+  if (current !== "") {
+    tokens.push(current);
+  }
+
+  return { kind: "success", tokens };
+}
+
+export function resolveInlineArgv(
+  result: SearchResult,
+  query: string,
+  fallbackArgv: string[] = [],
+): { argv: string[]; error: string | null } {
+  if (result.kind !== "command" || result.input_mode !== "raw_argv") {
+    return { argv: [], error: null };
+  }
+
+  const parsed = parseCommandLine(query);
+  if (parsed.kind === "error") {
+    return { argv: [], error: parsed.message };
+  }
+
+  const matchedTokenCount = longestCommandPrefixMatch(result, parsed.tokens);
+  if (matchedTokenCount > 0) {
+    return {
+      argv: parsed.tokens.slice(matchedTokenCount),
+      error: null,
+    };
+  }
+
+  return { argv: fallbackArgv, error: null };
 }
 
 function buildPendingExecutionStep(
@@ -217,6 +366,64 @@ function buildPendingExecutionStep(
   };
 }
 
+function longestCommandPrefixMatch(result: SearchResult, tokens: string[]): number {
+  const candidates = [
+    tokenizeCommandAlias(result.title),
+    tokenizeCommandAlias(result.id),
+    ...result.keywords.map(tokenizeCommandAlias),
+  ];
+  const idSegments = result.id.split(".");
+  const lastSegment = idSegments[idSegments.length - 1];
+  if (lastSegment) {
+    candidates.push(tokenizeCommandAlias(lastSegment));
+  }
+
+  let longestMatch = 0;
+  for (const candidate of candidates) {
+    if (candidate.length === 0 || candidate.length > tokens.length) {
+      continue;
+    }
+
+    const matches = candidate.every((token, index) => token === normalizeToken(tokens[index]));
+    if (matches) {
+      longestMatch = Math.max(longestMatch, candidate.length);
+    }
+  }
+
+  return longestMatch;
+}
+
+function isExactCommandAliasMatch(result: SearchResult, query: string): boolean {
+  const parsed = parseCommandLine(query);
+  if (parsed.kind === "error") {
+    return false;
+  }
+
+  const queryTokens = parsed.tokens.map(normalizeToken).filter((token) => token !== "");
+  if (queryTokens.length === 0) {
+    return false;
+  }
+
+  const candidates = [
+    tokenizeCommandAlias(result.title),
+    tokenizeCommandAlias(result.id),
+    ...result.keywords.map(tokenizeCommandAlias),
+  ];
+  const idSegments = result.id.split(".");
+  const lastSegment = idSegments[idSegments.length - 1];
+  if (lastSegment) {
+    candidates.push(tokenizeCommandAlias(lastSegment));
+  }
+
+  return candidates.some((candidate) => {
+    if (candidate.length !== queryTokens.length) {
+      return false;
+    }
+
+    return candidate.every((token, index) => token === queryTokens[index]);
+  });
+}
+
 function toArgumentsMap(
   values: Partial<Record<string, CommandArgumentValue>>,
 ): Record<string, CommandArgumentValue> {
@@ -225,4 +432,15 @@ function toArgumentsMap(
       return entry[1] !== undefined;
     }),
   );
+}
+
+function tokenizeCommandAlias(value: string): string[] {
+  return value
+    .split(/[\s._:-]+/)
+    .map(normalizeToken)
+    .filter((token) => token !== "");
+}
+
+function normalizeToken(value: string): string {
+  return value.trim().toLowerCase();
 }

@@ -1,5 +1,7 @@
 use rayon_core::{CommandError, CommandProvider, APP_REINDEX_COMMAND_ID};
-use rayon_types::{CommandDefinition, CommandExecutionRequest, CommandExecutionResult, CommandId};
+use rayon_types::{
+    CommandDefinition, CommandExecutionRequest, CommandExecutionResult, CommandId, CommandInputMode,
+};
 
 pub struct MaintenanceProvider;
 
@@ -11,6 +13,7 @@ impl CommandProvider for MaintenanceProvider {
             subtitle: Some("Refresh apps, commands, bookmarks, and search".into()),
             owner_plugin_id: "builtin.maintenance".into(),
             keywords: vec!["refresh".into(), "index".into()],
+            input_mode: CommandInputMode::Structured,
             arguments: Vec::new(),
         }]
     }

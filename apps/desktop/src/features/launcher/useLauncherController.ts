@@ -7,8 +7,11 @@ import {
   currentArgument,
   currentArgumentInputValue,
   type InteractiveSessionState,
+  parseCommandLine,
   type PendingExecution,
+  resolveInlineArgv,
   resolvePendingExecutionStep,
+  resolveStructuredDirectExecution,
   scheduleAfterNextPaint,
   type SearchResult,
 } from "@/commandExecution";
@@ -56,6 +59,7 @@ export function useLauncherController(): LauncherController {
   const [executionResult, setExecutionResult] = useState("");
   const [error, setError] = useState("");
   const [pendingExecution, setPendingExecution] = useState<PendingExecution | null>(null);
+  const [inlineFallbackArgv, setInlineFallbackArgv] = useState<string[]>([]);
   const [appVersion, setAppVersion] = useState<string | null>(null);
   const interactiveSessionId = interactiveSession?.session_id ?? null;
   const activeResults = interactiveSession ? interactiveSession.results : results;
@@ -72,6 +76,7 @@ export function useLauncherController(): LauncherController {
     setPendingExecution(null);
     setInteractiveSession(null);
     setResults([]);
+    setInlineFallbackArgv([]);
     requestAnimationFrame(() => {
       inputRef.current?.focus();
       inputRef.current?.select();
@@ -132,18 +137,19 @@ export function useLauncherController(): LauncherController {
 
     async function runSearch() {
       try {
-        const nextResults = await searchLauncher(query);
+        const nextResults = await resolveLauncherSearch(query);
         if (cancelled) {
           return;
         }
 
-        setResults(nextResults);
+        setResults(nextResults.results);
+        setInlineFallbackArgv(nextResults.inlineFallbackArgv);
         setSelectedIndex((currentIndex) => {
-          if (nextResults.length === 0) {
+          if (nextResults.results.length === 0) {
             return 0;
           }
 
-          return Math.min(currentIndex, nextResults.length - 1);
+          return Math.min(currentIndex, nextResults.results.length - 1);
         });
         setError("");
       } catch (searchError) {
@@ -152,6 +158,7 @@ export function useLauncherController(): LauncherController {
         }
 
         setResults([]);
+        setInlineFallbackArgv([]);
         setSelectedIndex(0);
         setError(searchError instanceof Error ? searchError.message : String(searchError));
       }
@@ -220,10 +227,11 @@ export function useLauncherController(): LauncherController {
   async function executeCommand(
     commandId: string,
     argumentsMap: Record<string, CommandArgumentValue>,
+    argv: string[] = [],
     optimisticSessionId?: string,
   ) {
     try {
-      const response = await executeLauncherCommand(commandId, argumentsMap);
+      const response = await executeLauncherCommand(commandId, argumentsMap, argv);
 
       if (response.kind === "started_session") {
         setInteractiveSession(response.session);
@@ -270,6 +278,12 @@ export function useLauncherController(): LauncherController {
   }
 
   async function executeResult(result: SearchResult) {
+    const structuredDirectExecution = resolveStructuredDirectExecution(result, query);
+    if (structuredDirectExecution.canExecute) {
+      await executeCommand(result.id, {});
+      return;
+    }
+
     const nextPendingExecution = beginPendingExecution(result);
     if (nextPendingExecution) {
       setPendingExecution(nextPendingExecution);
@@ -277,6 +291,14 @@ export function useLauncherController(): LauncherController {
       setExecutionResult("");
       setError("");
       setResults([]);
+      setInlineFallbackArgv([]);
+      return;
+    }
+
+    const inlineExecution = resolveInlineArgv(result, query, inlineFallbackArgv);
+    if (inlineExecution.error) {
+      setExecutionResult("");
+      setError(inlineExecution.error);
       return;
     }
 
@@ -288,17 +310,18 @@ export function useLauncherController(): LauncherController {
       setExecutionResult("");
       setError("");
       setPendingExecution(null);
+      setInlineFallbackArgv([]);
       setSelectedIndex(0);
       requestAnimationFrame(() => {
         inputRef.current?.focus();
       });
       scheduleAfterNextPaint(() => {
-        void executeCommand(result.id, {}, optimisticSession.session_id);
+        void executeCommand(result.id, {}, inlineExecution.argv, optimisticSession.session_id);
       });
       return;
     }
 
-    await executeCommand(result.id, {});
+    await executeCommand(result.id, {}, inlineExecution.argv);
   }
 
   async function executeSelectedCommand() {
@@ -422,6 +445,7 @@ export function useLauncherController(): LauncherController {
 
     if (!pendingExecution && nextQuery === "") {
       setResults([]);
+      setInlineFallbackArgv([]);
       setSelectedIndex(0);
     }
   }
@@ -537,6 +561,7 @@ export function useLauncherController(): LauncherController {
     interactiveSession !== null &&
     loadingInteractiveSession &&
     interactiveSession.results.length === 0;
+  const selectedSearchResult = interactiveSession ? null : (results[selectedIndex] ?? null);
 
   const resultItems: LauncherResultItemViewModel[] = interactiveSession
     ? interactiveSession.results.map((result, index) => ({
@@ -597,23 +622,32 @@ export function useLauncherController(): LauncherController {
             muted: true,
             error,
           }
-        : interactiveSession?.is_loading
+        : selectedSearchResult?.kind === "command" && selectedSearchResult.input_mode === "raw_argv"
           ? {
-              message: "Loading results…",
+              message:
+                inlineFallbackArgv.length > 0
+                  ? `Press Enter to run with ${String(inlineFallbackArgv.length)} argument${inlineFallbackArgv.length === 1 ? "" : "s"}.`
+                  : "Press Enter to run.",
               muted: true,
               error,
             }
-          : interactiveSession
+          : interactiveSession?.is_loading
             ? {
-                message: getInteractiveSubmitHint(interactiveSession),
+                message: "Loading results…",
                 muted: true,
                 error,
               }
-            : {
-                message: null,
-                muted: true,
-                error,
-              };
+            : interactiveSession
+              ? {
+                  message: getInteractiveSubmitHint(interactiveSession),
+                  muted: true,
+                  error,
+                }
+              : {
+                  message: null,
+                  muted: true,
+                  error,
+                };
 
   let emptyMessage: string | null = null;
   if (viewState.showEmptyResults) {
@@ -668,5 +702,42 @@ export function useLauncherController(): LauncherController {
       resultItemRefs.current[itemId] = node;
     },
     pendingExecution,
+  };
+}
+
+async function resolveLauncherSearch(query: string): Promise<{
+  results: SearchResult[];
+  inlineFallbackArgv: string[];
+}> {
+  const directResults = await searchLauncher(query);
+  if (directResults.length > 0) {
+    return {
+      results: directResults,
+      inlineFallbackArgv: [],
+    };
+  }
+
+  const parsed = parseCommandLine(query);
+  if (parsed.kind === "error" || parsed.tokens.length < 2) {
+    return {
+      results: directResults,
+      inlineFallbackArgv: [],
+    };
+  }
+
+  for (let prefixLength = parsed.tokens.length - 1; prefixLength > 0; prefixLength -= 1) {
+    const prefixQuery = parsed.tokens.slice(0, prefixLength).join(" ");
+    const prefixResults = await searchLauncher(prefixQuery);
+    if (prefixResults.length > 0) {
+      return {
+        results: prefixResults,
+        inlineFallbackArgv: parsed.tokens.slice(prefixLength),
+      };
+    }
+  }
+
+  return {
+    results: directResults,
+    inlineFallbackArgv: [],
   };
 }

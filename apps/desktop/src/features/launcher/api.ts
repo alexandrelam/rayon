@@ -37,10 +37,12 @@ export async function searchInteractiveSession(sessionId: string, query: string)
 export async function executeLauncherCommand(
   commandId: string,
   argumentsMap: Record<string, CommandArgumentValue>,
+  argv: string[] = [],
 ) {
   return invoke<CommandInvocationResult>("execute_command", {
     request: {
       command_id: commandId,
+      argv,
       arguments: argumentsMap,
     },
   });

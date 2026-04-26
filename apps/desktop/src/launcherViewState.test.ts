@@ -9,7 +9,9 @@ const searchResult = (overrides: Partial<SearchResult> = {}): SearchResult => ({
   icon_path: null,
   kind: "command",
   owner_plugin_id: "user.commands",
+  keywords: [],
   starts_interactive_session: false,
+  input_mode: "structured",
   arguments: [],
   ...overrides,
 });

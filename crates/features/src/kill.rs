@@ -4,7 +4,7 @@ use rayon_core::{
 };
 use rayon_types::{
     CommandDefinition, CommandExecutionRequest, CommandExecutionResult, CommandId,
-    InteractiveSessionMetadata, InteractiveSessionResult,
+    CommandInputMode, InteractiveSessionMetadata, InteractiveSessionResult,
 };
 use std::sync::Arc;
 
@@ -33,6 +33,7 @@ impl CommandProvider for KillProvider {
                 "port".into(),
                 "terminate".into(),
             ],
+            input_mode: CommandInputMode::Structured,
             arguments: Vec::new(),
         }]
     }

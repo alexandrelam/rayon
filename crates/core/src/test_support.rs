@@ -7,7 +7,7 @@ use crate::{
 use rayon_db::SearchIndexStats;
 use rayon_types::{
     BookmarkDefinition, CommandArgumentDefinition, CommandArgumentType, CommandDefinition,
-    CommandExecutionRequest, CommandExecutionResult, CommandId, InstalledApp,
+    CommandExecutionRequest, CommandExecutionResult, CommandId, CommandInputMode, InstalledApp,
     InteractiveSessionMetadata, InteractiveSessionResult, ProcessMatch, SearchableItemDocument,
 };
 use std::sync::{Arc, Mutex};
@@ -23,6 +23,7 @@ impl CommandProvider for TestProvider {
                 subtitle: None,
                 owner_plugin_id: "builtin.echo".into(),
                 keywords: vec![],
+                input_mode: CommandInputMode::Structured,
                 arguments: vec![CommandArgumentDefinition {
                     id: String::from("message"),
                     label: String::from("Message"),
@@ -39,6 +40,7 @@ impl CommandProvider for TestProvider {
                 subtitle: Some("Terminate a running process".into()),
                 owner_plugin_id: "builtin.kill".into(),
                 keywords: vec!["terminate".into()],
+                input_mode: CommandInputMode::Structured,
                 arguments: vec![],
             },
         ]
@@ -111,6 +113,7 @@ impl CommandProvider for CompletingProvider {
             subtitle: Some("Open a pull request".into()),
             owner_plugin_id: "builtin.github".into(),
             keywords: vec!["github".into()],
+            input_mode: CommandInputMode::Structured,
             arguments: vec![],
         }]
     }

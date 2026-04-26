@@ -1,4 +1,6 @@
-use rayon_types::{CommandArgumentDefinition, CommandArgumentType, CommandArgumentValue};
+use rayon_types::{
+    CommandArgumentDefinition, CommandArgumentType, CommandArgumentValue, CommandInputMode,
+};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
@@ -17,6 +19,8 @@ pub(crate) struct ManifestCommand {
     pub title: String,
     pub subtitle: Option<String>,
     pub keywords: Option<Vec<String>>,
+    #[serde(default)]
+    pub input_mode: CommandInputMode,
     pub program: String,
     pub base_args: Option<Vec<String>>,
     pub working_dir: Option<String>,

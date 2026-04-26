@@ -3,7 +3,7 @@ use rayon_core::{
 };
 use rayon_types::{
     CommandDefinition, CommandExecutionRequest, CommandExecutionResult, CommandId,
-    InteractiveSessionMetadata, InteractiveSessionResult, ThemePreference,
+    CommandInputMode, InteractiveSessionMetadata, InteractiveSessionResult, ThemePreference,
 };
 use std::sync::Arc;
 
@@ -33,6 +33,7 @@ impl CommandProvider for ThemeCommandProvider {
                 "dark".into(),
                 "system".into(),
             ],
+            input_mode: CommandInputMode::Structured,
             arguments: Vec::new(),
         }]
     }

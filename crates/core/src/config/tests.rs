@@ -122,3 +122,47 @@ url = "github.com"
 
     assert!(matches!(result, Err(ref error) if error.contains("invalid bookmark url")));
 }
+
+#[allow(clippy::unwrap_used)]
+#[test]
+fn rejects_raw_argv_commands_with_structured_arguments() {
+    let _env_guard = env_lock().lock().unwrap();
+    let config_home = unique_dir();
+    let rayon_dir = config_home.join("rayon");
+    fs::create_dir_all(&rayon_dir).unwrap();
+    fs::write(
+        rayon_dir.join("invalid-command.toml"),
+        r#"
+plugin_id = "user.commands"
+
+[[commands]]
+id = "user.echo"
+title = "Echo"
+input_mode = "raw_argv"
+program = "/bin/echo"
+
+[[commands.arguments]]
+id = "message"
+label = "Message"
+type = "string"
+required = true
+positional = 0
+"#,
+    )
+    .unwrap();
+
+    let previous = env::var_os("XDG_CONFIG_HOME");
+    env::set_var("XDG_CONFIG_HOME", &config_home);
+    let result = load_config();
+    if let Some(previous) = previous {
+        env::set_var("XDG_CONFIG_HOME", previous);
+    } else {
+        env::remove_var("XDG_CONFIG_HOME");
+    }
+
+    assert!(matches!(
+        result,
+        Err(ref error)
+            if error.contains("cannot define arguments when input_mode is raw_argv")
+    ));
+}

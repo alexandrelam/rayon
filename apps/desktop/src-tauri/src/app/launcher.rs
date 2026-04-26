@@ -32,6 +32,7 @@ pub fn reload_launcher(
     let result = launcher
         .execute_command(&CommandExecutionRequest {
             command_id: APP_REINDEX_COMMAND_ID.into(),
+            argv: Default::default(),
             arguments: Default::default(),
         })
         .map_err(|error| error.to_string())?;

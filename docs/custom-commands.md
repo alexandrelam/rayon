@@ -32,10 +32,48 @@ Supported command fields:
 - `program`: executable to run
 - `subtitle`: optional secondary text
 - `keywords`: optional search keywords
+- `input_mode`: optional `structured` or `raw_argv`, defaults to `structured`
 - `base_args`: optional fixed arguments always passed before user input
 - `working_dir`: optional working directory
 - `env`: optional environment variables
 - `arguments`: optional interactive arguments collected by the UI before execution
+
+## Input Modes
+
+Custom commands support two input modes:
+
+- `structured`: the existing guided flow. Press `Enter` on the command, then fill in any declared `arguments`.
+- `raw_argv`: one-line execution. Type the command and any trailing arguments in the launcher input, then press `Enter` to run immediately.
+
+Structured commands can also run directly on an exact alias match when they do not need any additional user input. This includes exact matches on the command title, id, last id segment, or any configured `keywords`.
+
+Example raw argv command:
+
+```toml
+plugin_id = "user.commands"
+
+[[commands]]
+id = "user.git-status"
+title = "Git Status"
+input_mode = "raw_argv"
+program = "/usr/bin/git"
+base_args = ["status"]
+```
+
+With that config, typing `git status ~/work/repo` in the launcher executes:
+
+```text
+/usr/bin/git status ~/work/repo
+```
+
+`raw_argv` uses basic shell-style tokenization:
+
+- unquoted whitespace splits arguments
+- single quotes preserve spaces
+- double quotes preserve spaces
+- backslashes escape the next character
+
+`raw_argv` does not support `arguments`. Choose either direct one-line argv input or the structured multi-step argument UI for a command, not both.
 
 ## Arguments
 
@@ -64,6 +102,7 @@ plugin_id = "user.commands"
 id = "user.git-status"
 title = "Git Status"
 subtitle = "Run git status in a repo"
+input_mode = "structured"
 program = "/usr/bin/git"
 base_args = ["status"]
 working_dir = "../work/project"
@@ -91,6 +130,8 @@ default_boolean = true
 
 - If `program` or `working_dir` is a relative path, it is resolved relative to the manifest file's directory.
 - `base_args` are added first.
+- In `structured` mode, an exact alias such as `tp` can execute immediately when all required arguments already have defaults or no required arguments are defined.
+- In `raw_argv` mode, launcher input after the matched command is appended directly as argv tokens.
 - String arguments with a `flag` become `flag value`.
 - Boolean arguments with a `flag` only add the flag when the value is `true`.
 - Positional arguments are appended in `positional` order.
@@ -141,4 +182,5 @@ Ask the assistant to write valid TOML using only the supported keys listed above
 - Command fails immediately: verify that `program` points to a real executable.
 - Relative path does not resolve: remember relative paths are resolved from the manifest file's directory, not your shell's current directory.
 - Boolean argument rejected: enter a true/false style value such as `true`, `false`, `yes`, `no`, `1`, `0`, `on`, or `off`.
+- Raw argv input rejected: check for an unclosed quote or trailing backslash in the launcher input.
 - Config change not visible yet: run `apps.reindex` in `rayon` to reload commands from the config directory. If reload fails, `rayon` keeps the previous live state and shows the config error.
