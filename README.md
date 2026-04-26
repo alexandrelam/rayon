@@ -1,3 +1,4 @@
+<img width="720" height="410" alt="rayon" src="https://github.com/user-attachments/assets/2ce36e05-03ae-415c-818d-60ad071f01a5" />
 # Rayon
 
 <p align="center">
@@ -24,9 +25,7 @@
 
 ## Demo
 
-![Rayon demo placeholder](docs/assets/rayon-demo-placeholder.svg)
-
-_Replace this image with a screenshot or GIF of the launcher in action._
+<img width="720" height="410" alt="rayon" src="https://github.com/user-attachments/assets/8c9df887-73ed-43a5-8d71-1950dd73ed80" />
 
 ## Why Rayon
 
