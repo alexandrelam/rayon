@@ -4,6 +4,7 @@ import {
   currentArgumentInputValue,
   type PendingExecution,
   resolvePendingExecutionStep,
+  scheduleAfterNextPaint,
   type SearchResult,
 } from "./commandExecution";
 
@@ -24,6 +25,7 @@ const searchResult = (overrides: Partial<SearchResult> = {}): SearchResult => ({
   icon_path: null,
   kind: "command",
   owner_plugin_id: "user.commands",
+  starts_interactive_session: false,
   arguments: [],
   ...overrides,
 });
@@ -125,5 +127,35 @@ describe("commandExecution helpers", () => {
         },
       },
     });
+  });
+
+  it("schedules work after the next paint boundary", () => {
+    const events: string[] = [];
+    const queuedFrames: (() => void)[] = [];
+    const queuedTasks: (() => void)[] = [];
+
+    scheduleAfterNextPaint(
+      () => {
+        events.push("callback");
+      },
+      (callback) => {
+        events.push("frame-scheduled");
+        queuedFrames.push(callback);
+      },
+      (callback) => {
+        events.push("task-scheduled");
+        queuedTasks.push(callback);
+      },
+    );
+
+    expect(events).toEqual(["frame-scheduled"]);
+    expect(queuedFrames).toHaveLength(1);
+
+    queuedFrames[0]?.();
+    expect(events).toEqual(["frame-scheduled", "task-scheduled"]);
+    expect(queuedTasks).toHaveLength(1);
+
+    queuedTasks[0]?.();
+    expect(events).toEqual(["frame-scheduled", "task-scheduled", "callback"]);
   });
 });

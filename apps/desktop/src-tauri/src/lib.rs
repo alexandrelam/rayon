@@ -2,6 +2,7 @@ mod app;
 mod invoke;
 mod shell;
 
+use std::sync::Arc;
 use tauri::{Manager, WindowEvent};
 
 const MAIN_WINDOW_LABEL: &str = "main";
@@ -24,7 +25,7 @@ pub fn run() {
         .setup(|app| {
             let app_state =
                 app::AppState::new(app.handle()).map_err(Box::<dyn std::error::Error>::from)?;
-            app.manage(app_state);
+            app.manage(Arc::new(app_state));
             shell::set_macos_activation_policy(app);
             shell::build_tray(app)?;
             shell::register_global_shortcut(app.handle())?;
@@ -41,6 +42,7 @@ pub fn run() {
             invoke::launcher::search_interactive_session,
             invoke::launcher::submit_interactive_session,
             invoke::launcher::hide_launcher,
+            invoke::launcher::resize_launcher,
             invoke::preferences::get_theme_preference
         ])
         .run(tauri::generate_context!());

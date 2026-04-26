@@ -9,6 +9,7 @@ const searchResult = (overrides: Partial<SearchResult> = {}): SearchResult => ({
   icon_path: null,
   kind: "command",
   owner_plugin_id: "user.commands",
+  starts_interactive_session: false,
   arguments: [],
   ...overrides,
 });
@@ -38,6 +39,7 @@ const interactiveSession: InteractiveSessionState = {
   subtitle: "Search by app, process, or port",
   input_placeholder: "Search process name or port 8080",
   query: "",
+  is_loading: false,
   results: [],
   message: null,
 };

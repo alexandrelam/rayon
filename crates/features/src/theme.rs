@@ -1,4 +1,6 @@
-use rayon_core::{CommandError, CommandProvider, InteractiveSessionUpdate};
+use rayon_core::{
+    CommandError, CommandProvider, InteractiveSessionSubmitOutcome, InteractiveSessionUpdate,
+};
 use rayon_types::{
     CommandDefinition, CommandExecutionRequest, CommandExecutionResult, CommandId,
     InteractiveSessionMetadata, InteractiveSessionResult, ThemePreference,
@@ -88,7 +90,7 @@ impl CommandProvider for ThemeCommandProvider {
         session: &InteractiveSessionMetadata,
         query: &str,
         item_id: &str,
-    ) -> Result<InteractiveSessionUpdate, CommandError> {
+    ) -> Result<InteractiveSessionSubmitOutcome, CommandError> {
         if session.command_id.as_str() != THEME_COMMAND_ID {
             return Err(CommandError::UnknownCommand(session.command_id.clone()));
         }
@@ -106,10 +108,12 @@ impl CommandProvider for ThemeCommandProvider {
         };
 
         let results = self.search_interactive_session(session, query)?;
-        Ok(InteractiveSessionUpdate {
-            results,
-            message: Some(message.into()),
-        })
+        Ok(InteractiveSessionSubmitOutcome::Updated(
+            InteractiveSessionUpdate {
+                results,
+                message: Some(message.into()),
+            },
+        ))
     }
 }
 

@@ -1,4 +1,7 @@
-use rayon_core::{AppPlatform, CommandError, CommandProvider, InteractiveSessionUpdate};
+use rayon_core::{
+    AppPlatform, CommandError, CommandProvider, InteractiveSessionSubmitOutcome,
+    InteractiveSessionUpdate,
+};
 use rayon_types::{
     CommandDefinition, CommandExecutionRequest, CommandExecutionResult, CommandId,
     InteractiveSessionMetadata, InteractiveSessionResult,
@@ -80,7 +83,7 @@ impl CommandProvider for KillProvider {
         session: &InteractiveSessionMetadata,
         query: &str,
         item_id: &str,
-    ) -> Result<InteractiveSessionUpdate, CommandError> {
+    ) -> Result<InteractiveSessionSubmitOutcome, CommandError> {
         if session.command_id.as_str() != KILL_COMMAND_ID {
             return Err(CommandError::UnknownCommand(session.command_id.clone()));
         }
@@ -97,14 +100,16 @@ impl CommandProvider for KillProvider {
             .search_processes(query)
             .map_err(CommandError::ExecutionFailed)?;
 
-        Ok(InteractiveSessionUpdate {
-            results: refreshed_results
-                .into_iter()
-                .filter(|process_match| process_match.pid != pid)
-                .map(to_session_result)
-                .collect(),
-            message: Some(format!("terminated PID {pid}")),
-        })
+        Ok(InteractiveSessionSubmitOutcome::Updated(
+            InteractiveSessionUpdate {
+                results: refreshed_results
+                    .into_iter()
+                    .filter(|process_match| process_match.pid != pid)
+                    .map(to_session_result)
+                    .collect(),
+                message: Some(format!("terminated PID {pid}")),
+            },
+        ))
     }
 }
 

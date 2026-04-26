@@ -8,8 +8,8 @@ use rayon_types::{
     BookmarkDefinition, CommandDefinition, CommandExecutionRequest, CommandExecutionResult,
     CommandId, CommandInvocationResult, InstalledApp, InteractiveSessionMetadata,
     InteractiveSessionQueryRequest, InteractiveSessionResult, InteractiveSessionState,
-    InteractiveSessionSubmitRequest, ProcessMatch, SearchResult, SearchResultKind,
-    SearchableItemDocument,
+    InteractiveSessionSubmitRequest, InteractiveSessionSubmitResult, ProcessMatch, SearchResult,
+    SearchResultKind, SearchableItemDocument,
 };
 use std::collections::HashMap;
 use std::error::Error;
@@ -49,7 +49,7 @@ pub trait CommandProvider: Send + Sync {
         _session: &InteractiveSessionMetadata,
         _query: &str,
         _item_id: &str,
-    ) -> Result<InteractiveSessionUpdate, CommandError> {
+    ) -> Result<InteractiveSessionSubmitOutcome, CommandError> {
         Err(CommandError::ExecutionFailed(
             "interactive session submit is not supported".into(),
         ))
@@ -60,6 +60,12 @@ pub trait CommandProvider: Send + Sync {
 pub struct InteractiveSessionUpdate {
     pub results: Vec<InteractiveSessionResult>,
     pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InteractiveSessionSubmitOutcome {
+    Updated(InteractiveSessionUpdate),
+    Completed(CommandExecutionResult),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -126,6 +132,7 @@ pub struct CommandRegistry {
 #[derive(Clone)]
 struct RegisteredCommand {
     definition: CommandDefinition,
+    starts_interactive_session: bool,
 }
 
 impl CommandRegistry {
@@ -146,8 +153,15 @@ impl CommandRegistry {
                 return Err(CommandError::DuplicateCommandId(definition.id));
             }
 
+            let starts_interactive_session = provider
+                .start_interactive_session(&definition.id)?
+                .is_some();
+
             self.command_owners.insert(command_key, provider_index);
-            self.commands.push(RegisteredCommand { definition });
+            self.commands.push(RegisteredCommand {
+                definition,
+                starts_interactive_session,
+            });
         }
 
         self.providers.push(provider);
@@ -199,7 +213,7 @@ impl CommandRegistry {
         session: &InteractiveSessionMetadata,
         query: &str,
         item_id: &str,
-    ) -> Result<InteractiveSessionUpdate, CommandError> {
+    ) -> Result<InteractiveSessionSubmitOutcome, CommandError> {
         self.providers[provider_index].submit_interactive_session(session, query, item_id)
     }
 
@@ -216,6 +230,7 @@ impl CommandRegistry {
                         icon_path: None,
                         kind: SearchResultKind::Command,
                         owner_plugin_id: Some(command.definition.owner_plugin_id.clone()),
+                        starts_interactive_session: command.starts_interactive_session,
                         arguments: command.definition.arguments.clone(),
                     },
                 )
@@ -353,6 +368,7 @@ impl AppCatalog {
                         icon_path: None,
                         kind: SearchResultKind::Application,
                         owner_plugin_id: None,
+                        starts_interactive_session: false,
                         arguments: Vec::new(),
                     },
                 )
@@ -393,6 +409,7 @@ impl BookmarkCatalog {
                         icon_path: None,
                         kind: SearchResultKind::Bookmark,
                         owner_plugin_id: Some(bookmark.owner_plugin_id.clone()),
+                        starts_interactive_session: false,
                         arguments: Vec::new(),
                     },
                 )
@@ -593,11 +610,6 @@ impl LauncherService {
                 },
             );
 
-            let results = self.registry.search_interactive_session(
-                session_owner.provider_index,
-                &metadata,
-                "",
-            )?;
             return Ok(CommandInvocationResult::StartedSession {
                 session: InteractiveSessionState {
                     session_id,
@@ -606,7 +618,8 @@ impl LauncherService {
                     subtitle: metadata.subtitle,
                     input_placeholder: metadata.input_placeholder,
                     query: String::new(),
-                    results,
+                    is_loading: true,
+                    results: Vec::new(),
                     message: None,
                 },
             });
@@ -639,6 +652,7 @@ impl LauncherService {
             subtitle: session.metadata.subtitle,
             input_placeholder: session.metadata.input_placeholder,
             query: request.query.clone(),
+            is_loading: false,
             results,
             message: None,
         })
@@ -647,25 +661,38 @@ impl LauncherService {
     pub fn submit_interactive_session(
         &self,
         request: &InteractiveSessionSubmitRequest,
-    ) -> Result<InteractiveSessionState, LauncherError> {
+    ) -> Result<InteractiveSessionSubmitResult, LauncherError> {
         let session = self.active_session(&request.session_id)?;
-        let update = self.registry.submit_interactive_session(
+        let outcome = self.registry.submit_interactive_session(
             session.provider_index,
             &session.metadata,
             &request.query,
             &request.item_id,
         )?;
 
-        Ok(InteractiveSessionState {
-            session_id: session.metadata.session_id,
-            command_id: session.metadata.command_id,
-            title: session.metadata.title,
-            subtitle: session.metadata.subtitle,
-            input_placeholder: session.metadata.input_placeholder,
-            query: request.query.clone(),
-            results: update.results,
-            message: update.message,
-        })
+        match outcome {
+            InteractiveSessionSubmitOutcome::Updated(update) => {
+                Ok(InteractiveSessionSubmitResult::UpdatedSession {
+                    session: InteractiveSessionState {
+                        session_id: session.metadata.session_id,
+                        command_id: session.metadata.command_id,
+                        title: session.metadata.title,
+                        subtitle: session.metadata.subtitle,
+                        input_placeholder: session.metadata.input_placeholder,
+                        query: request.query.clone(),
+                        is_loading: false,
+                        results: update.results,
+                        message: update.message,
+                    },
+                })
+            }
+            InteractiveSessionSubmitOutcome::Completed(result) => {
+                write_interactive_sessions(&self.interactive_sessions).remove(&request.session_id);
+                Ok(InteractiveSessionSubmitResult::Completed {
+                    output: result.output,
+                })
+            }
+        }
     }
 
     pub fn search_enabled(&self) -> bool {
@@ -755,7 +782,10 @@ impl LauncherService {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use rayon_types::{CommandArgumentDefinition, CommandArgumentType, InteractiveSessionMetadata};
+    use rayon_types::{
+        CommandArgumentDefinition, CommandArgumentType, InteractiveSessionMetadata,
+        InteractiveSessionSubmitResult,
+    };
     use std::sync::Mutex;
 
     struct TestProvider;
@@ -833,15 +863,17 @@ mod tests {
             _session: &InteractiveSessionMetadata,
             query: &str,
             item_id: &str,
-        ) -> Result<InteractiveSessionUpdate, CommandError> {
-            Ok(InteractiveSessionUpdate {
-                results: vec![InteractiveSessionResult {
-                    id: format!("refresh:{query}"),
-                    title: "Preview".into(),
-                    subtitle: Some("PID 99".into()),
-                }],
-                message: Some(format!("terminated {item_id}")),
-            })
+        ) -> Result<InteractiveSessionSubmitOutcome, CommandError> {
+            Ok(InteractiveSessionSubmitOutcome::Updated(
+                InteractiveSessionUpdate {
+                    results: vec![InteractiveSessionResult {
+                        id: format!("refresh:{query}"),
+                        title: "Preview".into(),
+                        subtitle: Some("PID 99".into()),
+                    }],
+                    message: Some(format!("terminated {item_id}")),
+                },
+            ))
         }
     }
 
@@ -1082,7 +1114,8 @@ mod tests {
         };
         assert_eq!(session.command_id, CommandId::from("kill"));
         assert_eq!(session.title, "Kill Process");
-        assert_eq!(session.results[0].title, "Arc");
+        assert!(session.is_loading);
+        assert!(session.results.is_empty());
     }
 
     #[test]
@@ -1110,6 +1143,7 @@ mod tests {
             })
             .unwrap();
         assert_eq!(searched.query, "8080");
+        assert!(!searched.is_loading);
         assert_eq!(searched.results[0].id, "result:8080");
 
         let submitted = launcher
@@ -1119,8 +1153,136 @@ mod tests {
                 item_id: "1234".into(),
             })
             .unwrap();
-        assert_eq!(submitted.message, Some("terminated 1234".into()));
-        assert_eq!(submitted.results[0].id, "refresh:arc");
+        let session = match submitted {
+            InteractiveSessionSubmitResult::UpdatedSession { session } => session,
+            InteractiveSessionSubmitResult::Completed { .. } => unreachable!(),
+        };
+        assert_eq!(session.message, Some("terminated 1234".into()));
+        assert_eq!(session.results[0].id, "refresh:arc");
+    }
+
+    #[test]
+    fn completed_interactive_submit_removes_active_session() {
+        struct CompletingProvider;
+
+        impl CommandProvider for CompletingProvider {
+            fn commands(&self) -> Vec<CommandDefinition> {
+                vec![CommandDefinition {
+                    id: CommandId::from("github.my-prs"),
+                    title: "My Pull Requests".into(),
+                    subtitle: Some("Open a pull request".into()),
+                    owner_plugin_id: "builtin.github".into(),
+                    keywords: vec!["github".into()],
+                    arguments: vec![],
+                }]
+            }
+
+            fn execute(
+                &self,
+                request: &CommandExecutionRequest,
+            ) -> Result<CommandExecutionResult, CommandError> {
+                Err(CommandError::UnknownCommand(request.command_id.clone()))
+            }
+
+            fn start_interactive_session(
+                &self,
+                command_id: &CommandId,
+            ) -> Result<Option<InteractiveSessionMetadata>, CommandError> {
+                if command_id.as_str() != "github.my-prs" {
+                    return Ok(None);
+                }
+
+                Ok(Some(InteractiveSessionMetadata {
+                    session_id: String::new(),
+                    command_id: command_id.clone(),
+                    title: "My Pull Requests".into(),
+                    subtitle: Some("Open a pull request".into()),
+                    input_placeholder: "Filter".into(),
+                }))
+            }
+
+            fn search_interactive_session(
+                &self,
+                _session: &InteractiveSessionMetadata,
+                _query: &str,
+            ) -> Result<Vec<InteractiveSessionResult>, CommandError> {
+                Ok(vec![InteractiveSessionResult {
+                    id: "https://github.com/example/repo/pull/1".into(),
+                    title: "Fix bug".into(),
+                    subtitle: Some("example/repo #1".into()),
+                }])
+            }
+
+            fn submit_interactive_session(
+                &self,
+                _session: &InteractiveSessionMetadata,
+                _query: &str,
+                _item_id: &str,
+            ) -> Result<InteractiveSessionSubmitOutcome, CommandError> {
+                Ok(InteractiveSessionSubmitOutcome::Completed(
+                    CommandExecutionResult {
+                        output: "opened example/repo#1".into(),
+                    },
+                ))
+            }
+        }
+
+        let mut registry = CommandRegistry::new();
+        registry
+            .register_provider(Arc::new(CompletingProvider))
+            .unwrap();
+
+        let platform = Arc::new(StubPlatform {
+            apps: Vec::new(),
+            launched: Mutex::new(Vec::new()),
+            opened_urls: Mutex::new(Vec::new()),
+            process_search_results: Mutex::new(Vec::new()),
+            terminated_pids: Mutex::new(Vec::new()),
+        });
+        let index = Arc::new(StubSearchIndex {
+            configured: true,
+            search_results: Vec::new(),
+            stats: SearchIndexStats {
+                discovered_count: 0,
+                indexed_count: 0,
+                skipped_count: 0,
+            },
+            last_documents: Mutex::new(Vec::new()),
+        });
+        let launcher = LauncherService::new(registry, Vec::new(), platform, index);
+
+        let session_result = launcher
+            .execute_command(&CommandExecutionRequest {
+                command_id: CommandId::from("github.my-prs"),
+                arguments: HashMap::new(),
+            })
+            .unwrap();
+        let session = match session_result {
+            CommandInvocationResult::StartedSession { session } => session,
+            CommandInvocationResult::Completed { .. } => unreachable!(),
+        };
+
+        let result = launcher
+            .submit_interactive_session(&InteractiveSessionSubmitRequest {
+                session_id: session.session_id.clone(),
+                query: String::new(),
+                item_id: "https://github.com/example/repo/pull/1".into(),
+            })
+            .unwrap();
+        assert_eq!(
+            result,
+            InteractiveSessionSubmitResult::Completed {
+                output: "opened example/repo#1".into()
+            }
+        );
+
+        let error = launcher
+            .search_interactive_session(&InteractiveSessionQueryRequest {
+                session_id: session.session_id,
+                query: String::new(),
+            })
+            .unwrap_err();
+        assert_eq!(error.to_string(), "unknown interactive session: session-1");
     }
 
     #[test]

@@ -17,6 +17,7 @@ export type SearchResult = {
   icon_path: string | null;
   kind: "command" | "application" | "bookmark";
   owner_plugin_id: string | null;
+  starts_interactive_session: boolean;
   arguments: CommandArgumentDefinition[];
 };
 
@@ -37,6 +38,7 @@ export type InteractiveSessionState = {
   subtitle: string | null;
   input_placeholder: string;
   query: string;
+  is_loading: boolean;
   results: InteractiveSessionResult[];
   message: string | null;
 };
@@ -44,6 +46,10 @@ export type InteractiveSessionState = {
 export type CommandInvocationResult =
   | { kind: "completed"; output: string }
   | { kind: "started_session"; session: InteractiveSessionState };
+
+export type InteractiveSessionSubmitResult =
+  | { kind: "updated_session"; session: InteractiveSessionState }
+  | { kind: "completed"; output: string };
 
 export type CommandArgumentValue =
   | { type: "string"; value: string }
@@ -61,6 +67,9 @@ export type PendingExecutionStep =
   | { kind: "error"; message: string }
   | { kind: "advance"; pendingExecution: PendingExecution }
   | { kind: "execute"; commandId: string; argumentsMap: Record<string, CommandArgumentValue> };
+
+type FrameScheduler = (callback: () => void) => void;
+type TaskScheduler = (callback: () => void) => void;
 
 export function beginPendingExecution(result: SearchResult): PendingExecution | null {
   if (result.kind !== "command" || result.arguments.length === 0) {
@@ -165,6 +174,24 @@ export function resolvePendingExecutionStep(
   }
 
   return buildPendingExecutionStep(pendingExecution, nextValues);
+}
+
+export function scheduleAfterNextPaint(
+  callback: () => void,
+  scheduleFrame: FrameScheduler = (nextCallback) => {
+    requestAnimationFrame(() => {
+      nextCallback();
+    });
+  },
+  scheduleTask: TaskScheduler = (nextCallback) => {
+    setTimeout(() => {
+      nextCallback();
+    }, 0);
+  },
+) {
+  scheduleFrame(() => {
+    scheduleTask(callback);
+  });
 }
 
 function buildPendingExecutionStep(

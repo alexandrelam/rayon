@@ -113,6 +113,8 @@ pub struct SearchResult {
     pub kind: SearchResultKind,
     pub owner_plugin_id: Option<String>,
     #[serde(default)]
+    pub starts_interactive_session: bool,
+    #[serde(default)]
     pub arguments: Vec<CommandArgumentDefinition>,
 }
 
@@ -156,6 +158,8 @@ pub struct InteractiveSessionState {
     pub input_placeholder: String,
     pub query: String,
     #[serde(default)]
+    pub is_loading: bool,
+    #[serde(default)]
     pub results: Vec<InteractiveSessionResult>,
     #[serde(default)]
     pub message: Option<String>,
@@ -179,6 +183,13 @@ pub struct InteractiveSessionSubmitRequest {
 pub enum CommandInvocationResult {
     Completed { output: String },
     StartedSession { session: InteractiveSessionState },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum InteractiveSessionSubmitResult {
+    UpdatedSession { session: InteractiveSessionState },
+    Completed { output: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]

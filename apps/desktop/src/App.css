@@ -19,6 +19,8 @@ html {
 :root[data-theme="light"] {
   color: #18212b;
   color-scheme: light;
+  --launcher-max-height: 420px;
+  --results-max-height: 220px;
   --panel-border: rgba(24, 33, 43, 0.1);
   --panel-bg-start: rgba(255, 255, 255, 0.9);
   --panel-bg-end: rgba(244, 247, 251, 0.86);
@@ -60,6 +62,7 @@ body {
 }
 
 .launcher-shell {
+  width: 100%;
   padding: 14px;
   background: transparent;
 }
@@ -67,14 +70,17 @@ body {
 .palette {
   width: 100%;
   display: grid;
-  gap: 14px;
+  gap: 12px;
   padding: 18px;
+  max-height: calc(var(--launcher-max-height) - 28px);
   border: 1px solid var(--panel-border);
   border-radius: 22px;
   background: linear-gradient(180deg, var(--panel-bg-start) 0%, var(--panel-bg-end) 100%);
   box-shadow: inset 0 1px 0 var(--panel-inset);
   backdrop-filter: blur(28px) saturate(145%);
   -webkit-backdrop-filter: blur(28px) saturate(145%);
+  overflow: hidden;
+  align-content: start;
 }
 
 .palette-header {
@@ -132,10 +138,14 @@ h1 {
 
 .results {
   margin: 0;
-  padding: 0;
+  padding: 2px 4px 4px 0;
   list-style: none;
   display: grid;
   gap: 8px;
+  max-height: var(--results-max-height);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  align-content: start;
 }
 
 .result {
@@ -171,6 +181,7 @@ h1 {
 }
 
 .result-copy {
+  width: 100%;
   min-width: 0;
   display: grid;
   gap: 3px;
@@ -210,12 +221,72 @@ h1 {
   color: var(--empty);
 }
 
+.result-skeleton {
+  position: relative;
+  cursor: default;
+  pointer-events: none;
+  overflow: hidden;
+  border-color: rgba(24, 33, 43, 0.06);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.72) 0%, rgba(240, 244, 249, 0.68) 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.55),
+    0 10px 24px -18px rgba(38, 120, 205, 0.3);
+  animation: skeleton-card-breathe 1.9s ease-in-out infinite;
+  animation-delay: var(--skeleton-delay, 0ms);
+}
+
+.result-skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    105deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.18) 32%,
+    rgba(255, 255, 255, 0.42) 48%,
+    rgba(255, 255, 255, 0.18) 64%,
+    transparent 100%
+  );
+  transform: translateX(-130%);
+  animation: skeleton-sweep 1.7s ease-out infinite;
+  animation-delay: var(--skeleton-delay, 0ms);
+}
+
+.result-title-skeleton,
+.result-kind-skeleton,
+.result-meta-skeleton {
+  display: inline-flex;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.88) 0%, rgba(223, 233, 244, 0.92) 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
+  opacity: 0.96;
+  animation: skeleton-pill-pulse 1.7s ease-in-out infinite;
+  animation-delay: var(--skeleton-delay, 0ms);
+}
+
+.result-title-skeleton {
+  width: min(100%, var(--skeleton-title-width, 15rem));
+  height: 1rem;
+}
+
+.result-kind-skeleton {
+  width: 5rem;
+  height: 1.4rem;
+}
+
+.result-meta-skeleton {
+  width: min(100%, var(--skeleton-meta-width, 19rem));
+  height: 0.82rem;
+}
+
 .output {
   min-height: 58px;
   padding: 14px 15px;
   border-radius: 14px;
   border: 1px solid var(--output-border);
   background: var(--output-bg);
+  display: grid;
+  gap: 4px;
 }
 
 .output-arg {
@@ -233,6 +304,57 @@ h1 {
 .error {
   margin-top: 8px;
   color: var(--error);
+}
+
+@keyframes skeleton-sweep {
+  0% {
+    transform: translateX(-130%);
+  }
+
+  55%,
+  100% {
+    transform: translateX(130%);
+  }
+}
+
+@keyframes skeleton-pill-pulse {
+  0%,
+  100% {
+    opacity: 0.82;
+    transform: scaleX(0.995);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scaleX(1);
+  }
+}
+
+@keyframes skeleton-card-breathe {
+  0%,
+  100% {
+    transform: translateY(0);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.55),
+      0 10px 24px -18px rgba(38, 120, 205, 0.26);
+  }
+
+  50% {
+    transform: translateY(-1px);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.68),
+      0 14px 28px -18px rgba(38, 120, 205, 0.36);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .result-skeleton,
+  .result-skeleton::after,
+  .result-title-skeleton,
+  .result-kind-skeleton,
+  .result-meta-skeleton {
+    animation: none;
+  }
 }
 
 :root[data-theme="dark"] {
@@ -298,7 +420,9 @@ h1 {
   }
 
   .palette {
+    gap: 10px;
     padding: 15px;
     border-radius: 18px;
+    max-height: calc(var(--launcher-max-height) - 20px);
   }
 }
