@@ -658,17 +658,9 @@ function App() {
                         {
                           "--skeleton-delay": `${String(index * 90)}ms`,
                           "--skeleton-title-width":
-                            index % 3 === 0
-                              ? "13.5rem"
-                              : index % 3 === 1
-                                ? "11.75rem"
-                                : "15rem",
+                            index % 3 === 0 ? "13.5rem" : index % 3 === 1 ? "11.75rem" : "15rem",
                           "--skeleton-meta-width":
-                            index % 3 === 0
-                              ? "17rem"
-                              : index % 3 === 1
-                                ? "13.5rem"
-                                : "19rem",
+                            index % 3 === 0 ? "17rem" : index % 3 === 1 ? "13.5rem" : "19rem",
                         } as CSSProperties
                       }
                     >

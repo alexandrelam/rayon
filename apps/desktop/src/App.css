@@ -227,8 +227,7 @@ h1 {
   pointer-events: none;
   overflow: hidden;
   border-color: rgba(24, 33, 43, 0.06);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.72) 0%, rgba(240, 244, 249, 0.68) 100%);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.72) 0%, rgba(240, 244, 249, 0.68) 100%);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.55),
     0 10px 24px -18px rgba(38, 120, 205, 0.3);
@@ -258,8 +257,7 @@ h1 {
 .result-meta-skeleton {
   display: inline-flex;
   border-radius: 999px;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.88) 0%, rgba(223, 233, 244, 0.92) 100%);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.88) 0%, rgba(223, 233, 244, 0.92) 100%);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
   opacity: 0.96;
   animation: skeleton-pill-pulse 1.7s ease-in-out infinite;
