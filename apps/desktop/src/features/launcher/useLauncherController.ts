@@ -1,4 +1,5 @@
 import { type KeyboardEventHandler, useEffect, useRef, useState } from "react";
+import { getVersion } from "@tauri-apps/api/app";
 
 import {
   beginPendingExecution,
@@ -55,6 +56,7 @@ export function useLauncherController(): LauncherController {
   const [executionResult, setExecutionResult] = useState("");
   const [error, setError] = useState("");
   const [pendingExecution, setPendingExecution] = useState<PendingExecution | null>(null);
+  const [appVersion, setAppVersion] = useState<string | null>(null);
   const interactiveSessionId = interactiveSession?.session_id ?? null;
   const activeResults = interactiveSession ? interactiveSession.results : results;
   const selectedResultId = activeResults[selectedIndex]?.id ?? null;
@@ -80,6 +82,29 @@ export function useLauncherController(): LauncherController {
     inputRef.current?.focus();
     applyThemePreference("system");
     void refreshThemePreference();
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadAppVersion() {
+      try {
+        const version = await getVersion();
+        if (!cancelled) {
+          setAppVersion(version);
+        }
+      } catch {
+        if (!cancelled) {
+          setAppVersion(null);
+        }
+      }
+    }
+
+    void loadAppVersion();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -539,6 +564,7 @@ export function useLauncherController(): LauncherController {
       pendingExecution && activeArgument
         ? `${activeArgument.label}${activeArgument.required ? " · required" : " · optional"}`
         : (interactiveSession?.subtitle ?? null),
+    version: appVersion,
   };
 
   const argumentPanel: LauncherArgumentPanelViewModel | null =

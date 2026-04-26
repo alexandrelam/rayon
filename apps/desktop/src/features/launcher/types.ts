@@ -13,6 +13,7 @@ export type LauncherResultItemViewModel = {
 export type LauncherHeaderViewModel = {
   title: string;
   subtitle: string | null;
+  version: string | null;
 };
 
 export type LauncherFooterViewModel = {
