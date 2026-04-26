@@ -1,3 +1,5 @@
+mod theme;
+
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
@@ -13,10 +15,11 @@ use rayon_platform::MacOsAppManager;
 use rayon_types::{
     BookmarkDefinition, CommandExecutionRequest, CommandExecutionResult, CommandInvocationResult,
     InteractiveSessionQueryRequest, InteractiveSessionState, InteractiveSessionSubmitRequest,
-    SearchResult,
+    SearchResult, ThemePreference,
 };
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use theme::{ThemeCommandProvider, ThemeSettingsStore};
 
 const MAIN_WINDOW_LABEL: &str = "main";
 const LAUNCHER_OPENED_EVENT: &str = "launcher:opened";
@@ -25,6 +28,7 @@ struct AppState {
     launcher: RwLock<LauncherService>,
     platform: Arc<dyn AppPlatform>,
     search_index: Arc<dyn SearchIndex>,
+    theme_settings: Arc<ThemeSettingsStore>,
 }
 
 impl AppState {
@@ -34,12 +38,14 @@ impl AppState {
                 .map_err(|error| error.to_string())?,
         );
         let platform = Arc::new(MacOsAppManager);
-        let launcher = build_launcher(platform.clone(), app_index.clone())?;
+        let theme_settings = Arc::new(ThemeSettingsStore::new(app_theme_settings_path(app)?));
+        let launcher = build_launcher(platform.clone(), app_index.clone(), theme_settings.clone())?;
 
         Ok(Self {
             launcher: RwLock::new(launcher),
             platform,
             search_index: app_index,
+            theme_settings,
         })
     }
 
@@ -48,6 +54,7 @@ impl AppState {
             &self.launcher,
             self.platform.clone(),
             self.search_index.clone(),
+            self.theme_settings.clone(),
         )
     }
 }
@@ -55,8 +62,9 @@ impl AppState {
 fn build_launcher(
     platform: Arc<dyn AppPlatform>,
     search_index: Arc<dyn SearchIndex>,
+    theme_settings: Arc<ThemeSettingsStore>,
 ) -> Result<LauncherService, String> {
-    let (registry, bookmarks) = load_registry_and_bookmarks(platform.clone())?;
+    let (registry, bookmarks) = load_registry_and_bookmarks(platform.clone(), theme_settings)?;
     Ok(LauncherService::new(
         registry,
         bookmarks,
@@ -69,8 +77,9 @@ fn reload_launcher(
     launcher_slot: &RwLock<LauncherService>,
     platform: Arc<dyn AppPlatform>,
     search_index: Arc<dyn SearchIndex>,
+    theme_settings: Arc<ThemeSettingsStore>,
 ) -> Result<CommandExecutionResult, String> {
-    let launcher = build_launcher(platform, search_index)?;
+    let launcher = build_launcher(platform, search_index, theme_settings)?;
     let result = launcher
         .execute_command(&CommandExecutionRequest {
             command_id: APP_REINDEX_COMMAND_ID.into(),
@@ -86,6 +95,7 @@ fn reload_launcher(
 
 fn load_registry_and_bookmarks(
     platform: Arc<dyn AppPlatform>,
+    theme_settings: Arc<ThemeSettingsStore>,
 ) -> Result<(CommandRegistry, Vec<BookmarkDefinition>), String> {
     let mut registry = CommandRegistry::new();
     let loaded_config = load_config().map_err(|error| error.to_string())?;
@@ -95,6 +105,10 @@ fn load_registry_and_bookmarks(
             .register_provider(provider)
             .map_err(|error| format!("failed to register built-in provider: {error}"))?;
     }
+
+    registry
+        .register_provider(Arc::new(ThemeCommandProvider::new(theme_settings)))
+        .map_err(|error| format!("failed to register built-in provider: {error}"))?;
 
     for provider in loaded_config.command_providers {
         registry
@@ -127,6 +141,13 @@ fn app_search_index_path(app: &AppHandle) -> Result<PathBuf, String> {
     app.path()
         .app_local_data_dir()
         .map(|path| path.join("search").join("apps"))
+        .map_err(|error| error.to_string())
+}
+
+fn app_theme_settings_path(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_local_data_dir()
+        .map(|path| path.join("settings").join("theme.json"))
         .map_err(|error| error.to_string())
 }
 
@@ -200,6 +221,17 @@ fn hide_launcher(app: AppHandle) -> Result<(), String> {
         .ok_or_else(|| "main window is not available".to_string())?;
 
     window.hide().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn get_theme_preference(state: tauri::State<'_, AppState>) -> ThemePreference {
+    match state.theme_settings.load() {
+        Ok(theme) => theme,
+        Err(error) => {
+            eprintln!("failed to load theme settings: {error}");
+            ThemePreference::System
+        }
+    }
 }
 
 fn show_launcher(app: &AppHandle) -> tauri::Result<()> {
@@ -338,7 +370,8 @@ pub fn run() {
             execute_command,
             search_interactive_session,
             submit_interactive_session,
-            hide_launcher
+            hide_launcher,
+            get_theme_preference
         ])
         .run(tauri::generate_context!());
 
@@ -460,7 +493,13 @@ program = "/bin/echo"
 
         let search_index = Arc::new(StubSearchIndex::default());
         let platform: Arc<dyn AppPlatform> = Arc::new(StubPlatform);
-        let launcher = build_launcher(platform.clone(), search_index.clone()).unwrap();
+        let theme_settings = Arc::new(ThemeSettingsStore::new(config_home.join("theme.json")));
+        let launcher = build_launcher(
+            platform.clone(),
+            search_index.clone(),
+            theme_settings.clone(),
+        )
+        .unwrap();
         let launcher_slot = RwLock::new(launcher);
 
         write_config(
@@ -498,7 +537,8 @@ keywords = ["jira", "board"]
             ],
         );
 
-        let result = reload_launcher(&launcher_slot, platform, search_index).unwrap();
+        let result =
+            reload_launcher(&launcher_slot, platform, search_index, theme_settings).unwrap();
         assert!(result.output.starts_with("reindexed "));
 
         let launcher = read_launcher(&launcher_slot);
@@ -539,7 +579,13 @@ keywords = ["docs"]
 
         let search_index = Arc::new(StubSearchIndex::default());
         let platform: Arc<dyn AppPlatform> = Arc::new(StubPlatform);
-        let launcher = build_launcher(platform.clone(), search_index.clone()).unwrap();
+        let theme_settings = Arc::new(ThemeSettingsStore::new(config_home.join("theme.json")));
+        let launcher = build_launcher(
+            platform.clone(),
+            search_index.clone(),
+            theme_settings.clone(),
+        )
+        .unwrap();
         let launcher_slot = RwLock::new(launcher);
 
         write_config(
@@ -557,7 +603,8 @@ url = "not-a-url"
             )],
         );
 
-        let error = reload_launcher(&launcher_slot, platform, search_index).unwrap_err();
+        let error =
+            reload_launcher(&launcher_slot, platform, search_index, theme_settings).unwrap_err();
         assert!(error.contains("invalid bookmark url"));
 
         let launcher = read_launcher(&launcher_slot);

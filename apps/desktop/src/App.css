@@ -1,17 +1,24 @@
+html {
+  color-scheme: light dark;
+}
+
 :root {
   font-family: "SF Pro Text", "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
   font-size: 16px;
   line-height: 1.5;
   font-weight: 400;
-  color: rgba(244, 247, 252, 0.96);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   -webkit-text-size-adjust: 100%;
   background: transparent;
+}
+
+:root,
+:root[data-theme="light"] {
   color: #18212b;
-  color-scheme: light dark;
+  color-scheme: light;
   --panel-border: rgba(24, 33, 43, 0.1);
   --panel-bg-start: rgba(255, 255, 255, 0.9);
   --panel-bg-end: rgba(244, 247, 251, 0.86);
@@ -227,8 +234,37 @@ h1 {
   color: var(--error);
 }
 
+:root[data-theme="dark"] {
+  color: rgba(244, 247, 252, 0.96);
+  color-scheme: dark;
+  --panel-border: rgba(255, 255, 255, 0.14);
+  --panel-bg-start: rgba(23, 27, 35, 0.94);
+  --panel-bg-end: rgba(13, 16, 22, 0.9);
+  --panel-inset: rgba(255, 255, 255, 0.08);
+  --eyebrow: rgba(151, 166, 192, 0.78);
+  --input-border: rgba(255, 255, 255, 0.12);
+  --input-bg: rgba(255, 255, 255, 0.06);
+  --input-focus-border: rgba(126, 196, 255, 0.72);
+  --input-focus-ring: rgba(78, 157, 255, 0.16);
+  --placeholder: rgba(151, 166, 192, 0.72);
+  --result-border: rgba(255, 255, 255, 0.08);
+  --result-bg: rgba(255, 255, 255, 0.04);
+  --selected-border: rgba(126, 196, 255, 0.42);
+  --selected-bg: linear-gradient(135deg, rgba(68, 112, 255, 0.32), rgba(35, 151, 117, 0.18));
+  --result-id: rgba(200, 208, 224, 0.66);
+  --empty: rgba(151, 166, 192, 0.84);
+  --output-border: rgba(255, 255, 255, 0.08);
+  --output-bg: rgba(255, 255, 255, 0.05);
+  --muted: rgba(151, 166, 192, 0.78);
+  --error: #ff8f7a;
+}
+
+:root[data-theme="system"] {
+  color-scheme: light dark;
+}
+
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root[data-theme="system"] {
     color: rgba(244, 247, 252, 0.96);
     --panel-border: rgba(255, 255, 255, 0.14);
     --panel-bg-start: rgba(23, 27, 35, 0.94);

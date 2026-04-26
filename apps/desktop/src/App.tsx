@@ -14,6 +14,7 @@ import {
 } from "./commandExecution";
 import "./App.css";
 import { getLauncherViewState, shouldRunSearch } from "./launcherViewState";
+import { applyThemePreference, type ThemePreference } from "./theme";
 
 function App() {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -27,6 +28,11 @@ function App() {
   const [error, setError] = useState("");
   const [pendingExecution, setPendingExecution] = useState<PendingExecution | null>(null);
   const interactiveSessionId = interactiveSession?.session_id ?? null;
+
+  async function refreshThemePreference() {
+    const theme = await invoke<ThemePreference>("get_theme_preference");
+    applyThemePreference(theme);
+  }
 
   function resetLauncher() {
     setQuery("");
@@ -44,6 +50,8 @@ function App() {
 
   useEffect(() => {
     inputRef.current?.focus();
+    applyThemePreference("system");
+    void refreshThemePreference();
   }, []);
 
   useEffect(() => {
@@ -167,6 +175,7 @@ function App() {
         setError("");
         setPendingExecution(null);
         setSelectedIndex(0);
+        void refreshThemePreference();
         return;
       }
 
@@ -175,6 +184,7 @@ function App() {
       setPendingExecution(null);
       setInteractiveSession(null);
       inputRef.current?.focus();
+      void refreshThemePreference();
     } catch (executionError) {
       setExecutionResult("");
       setError(executionError instanceof Error ? executionError.message : String(executionError));
@@ -244,9 +254,14 @@ function App() {
       });
       setExecutionResult("");
       setError("");
+      void refreshThemePreference();
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : String(submitError));
     }
+  }
+
+  function interactiveResultKind(session: InteractiveSessionState): string {
+    return session.command_id === "kill" ? "Process" : "Option";
   }
 
   function moveSelection(direction: -1 | 1) {
@@ -476,7 +491,9 @@ function App() {
                       <span className="result-copy">
                         <span className="result-row">
                           <span className="result-title">{result.title}</span>
-                          <span className="result-kind">Process</span>
+                          <span className="result-kind">
+                            {interactiveResultKind(interactiveSession)}
+                          </span>
                         </span>
                         <span className="result-meta">{result.subtitle ?? result.id}</span>
                       </span>
