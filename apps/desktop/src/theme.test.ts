@@ -12,6 +12,9 @@ describe("theme helpers", () => {
       configurable: true,
     });
 
+    applyThemePreference("light");
+    expect(document.documentElement.dataset.theme).toBe("light");
+
     applyThemePreference("dark");
     expect(document.documentElement.dataset.theme).toBe("dark");
 
