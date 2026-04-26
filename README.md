@@ -1,9 +1,8 @@
-<img width="720" height="410" alt="rayon" src="https://github.com/user-attachments/assets/2ce36e05-03ae-415c-818d-60ad071f01a5" />
-# Rayon
-
 <p align="center">
   <img src="apps/desktop/src-tauri/icons/icon.png" alt="Rayon icon" width="96" height="96" />
 </p>
+
+<h1 align="center">Rayon</h1>
 
 <p align="center">
   <strong>The open source launcher for macOS that stays fast, lightweight, and under your control.</strong>
@@ -25,7 +24,9 @@
 
 ## Demo
 
-<img width="720" height="410" alt="rayon" src="https://github.com/user-attachments/assets/8c9df887-73ed-43a5-8d71-1950dd73ed80" />
+<p align="center">
+  <img width="960" alt="Rayon demo" src="https://github.com/user-attachments/assets/8c9df887-73ed-43a5-8d71-1950dd73ed80" />
+</p>
 
 ## Why Rayon
 
