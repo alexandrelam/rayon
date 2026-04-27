@@ -7,6 +7,7 @@ use rayon_features::{
 };
 use rayon_types::{
     BookmarkDefinition, CommandExecutionRequest, CommandExecutionResult, CommandInvocationResult,
+    ImageAssetDefinition,
 };
 use std::sync::{Arc, RwLock};
 
@@ -16,11 +17,12 @@ pub fn build_launcher(
     clipboard: Arc<ClipboardHistoryService>,
     theme_settings: Arc<ThemeSettingsStore>,
 ) -> Result<LauncherService, String> {
-    let (registry, bookmarks) =
-        load_registry_and_bookmarks(platform.clone(), clipboard, theme_settings)?;
+    let (registry, bookmarks, images) =
+        load_registry_bookmarks_and_images(platform.clone(), clipboard, theme_settings)?;
     Ok(LauncherService::new(
         registry,
         bookmarks,
+        images,
         platform,
         search_index,
     ))
@@ -48,11 +50,18 @@ pub fn reload_launcher(
     Ok(CommandExecutionResult { output })
 }
 
-fn load_registry_and_bookmarks(
+fn load_registry_bookmarks_and_images(
     platform: Arc<dyn AppPlatform>,
     clipboard: Arc<ClipboardHistoryService>,
     theme_settings: Arc<ThemeSettingsStore>,
-) -> Result<(CommandRegistry, Vec<BookmarkDefinition>), String> {
+) -> Result<
+    (
+        CommandRegistry,
+        Vec<BookmarkDefinition>,
+        Vec<ImageAssetDefinition>,
+    ),
+    String,
+> {
     let mut registry = CommandRegistry::new();
     let loaded_config = load_config().map_err(|error| error.to_string())?;
 
@@ -73,7 +82,11 @@ fn load_registry_and_bookmarks(
     }
 
     validate_bookmark_ids(&registry, &loaded_config.bookmarks)?;
-    Ok((registry, loaded_config.bookmarks))
+    Ok((
+        registry,
+        loaded_config.bookmarks,
+        loaded_config.image_assets,
+    ))
 }
 
 fn validate_bookmark_ids(
@@ -137,6 +150,10 @@ mod tests {
         }
 
         fn open_url(&self, _url: &str) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn copy_image_to_clipboard(&self, _image_path: &std::path::Path) -> Result<(), String> {
             Ok(())
         }
 

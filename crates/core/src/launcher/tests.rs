@@ -7,9 +7,10 @@ use crate::SearchIndexStats;
 use crate::{CommandError, CommandProvider, InteractiveSessionSubmitOutcome};
 use rayon_types::{
     BookmarkDefinition, BrowserTab, BrowserTabTarget, CommandDefinition, CommandExecutionRequest,
-    CommandId, CommandInputMode, CommandInvocationResult, InteractiveSessionCompletionBehavior,
-    InteractiveSessionMetadata, InteractiveSessionQueryRequest, InteractiveSessionResult,
-    InteractiveSessionSubmitRequest, InteractiveSessionSubmitResult, SearchResultKind,
+    CommandId, CommandInputMode, CommandInvocationResult, ImageAssetDefinition,
+    InteractiveSessionCompletionBehavior, InteractiveSessionMetadata,
+    InteractiveSessionQueryRequest, InteractiveSessionResult, InteractiveSessionSubmitRequest,
+    InteractiveSessionSubmitResult, SearchResultKind,
 };
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -43,6 +44,7 @@ fn launcher_with_platform(
             url: "https://github.com".into(),
             keywords: vec!["code".into()],
         }],
+        Vec::new(),
         platform,
         index,
     )
@@ -77,6 +79,7 @@ fn aggregate_search_does_not_include_browser_tabs() {
         }],
         launched: Mutex::new(Vec::new()),
         opened_urls: Mutex::new(Vec::new()),
+        copied_images: Mutex::new(Vec::new()),
         browser_tabs: Mutex::new(vec![BrowserTab {
             browser: "chrome".into(),
             window_id: "window-1".into(),
@@ -168,6 +171,7 @@ fn execute_routes_browser_tab_ids_to_platform_focus() {
         apps: Vec::new(),
         launched: Mutex::new(Vec::new()),
         opened_urls: Mutex::new(Vec::new()),
+        copied_images: Mutex::new(Vec::new()),
         browser_tabs: Mutex::new(vec![BrowserTab {
             browser: "chrome".into(),
             window_id: "window-1".into(),
@@ -300,6 +304,7 @@ fn completed_interactive_submit_removes_active_session() {
         apps: Vec::new(),
         launched: Mutex::new(Vec::new()),
         opened_urls: Mutex::new(Vec::new()),
+        copied_images: Mutex::new(Vec::new()),
         browser_tabs: Mutex::new(Vec::new()),
         focused_browser_tabs: Mutex::new(Vec::new()),
         process_search_results: Mutex::new(Vec::new()),
@@ -315,7 +320,7 @@ fn completed_interactive_submit_removes_active_session() {
         },
         last_documents: Mutex::new(Vec::new()),
     });
-    let launcher = LauncherService::new(registry, Vec::new(), platform, index);
+    let launcher = LauncherService::new(registry, Vec::new(), Vec::new(), platform, index);
 
     let session_result = launcher
         .execute_command(&CommandExecutionRequest {
@@ -444,6 +449,7 @@ fn completed_interactive_submit_calls_provider_cleanup() {
         apps: Vec::new(),
         launched: Mutex::new(Vec::new()),
         opened_urls: Mutex::new(Vec::new()),
+        copied_images: Mutex::new(Vec::new()),
         browser_tabs: Mutex::new(Vec::new()),
         focused_browser_tabs: Mutex::new(Vec::new()),
         process_search_results: Mutex::new(Vec::new()),
@@ -459,7 +465,7 @@ fn completed_interactive_submit_calls_provider_cleanup() {
         },
         last_documents: Mutex::new(Vec::new()),
     });
-    let launcher = LauncherService::new(registry, Vec::new(), platform, index);
+    let launcher = LauncherService::new(registry, Vec::new(), Vec::new(), platform, index);
 
     let session = match launcher
         .execute_command(&CommandExecutionRequest {
@@ -499,6 +505,7 @@ fn startup_reindexes_commands_and_apps() {
         }],
         launched: Mutex::new(Vec::new()),
         opened_urls: Mutex::new(Vec::new()),
+        copied_images: Mutex::new(Vec::new()),
         browser_tabs: Mutex::new(Vec::new()),
         focused_browser_tabs: Mutex::new(Vec::new()),
         process_search_results: Mutex::new(Vec::new()),
@@ -525,6 +532,7 @@ fn startup_reindexes_commands_and_apps() {
             url: "https://github.com".into(),
             keywords: vec!["git".into()],
         }],
+        Vec::new(),
         platform,
         index.clone(),
     );
@@ -557,4 +565,100 @@ fn command_search_results_include_close_launcher_flag() {
         .unwrap();
 
     assert!(!command.close_launcher_on_success);
+}
+
+#[allow(clippy::unwrap_used)]
+#[test]
+fn aggregate_search_includes_images() {
+    let platform = Arc::new(StubPlatform {
+        apps: Vec::new(),
+        launched: Mutex::new(Vec::new()),
+        opened_urls: Mutex::new(Vec::new()),
+        copied_images: Mutex::new(Vec::new()),
+        browser_tabs: Mutex::new(Vec::new()),
+        focused_browser_tabs: Mutex::new(Vec::new()),
+        process_search_results: Mutex::new(Vec::new()),
+        terminated_pids: Mutex::new(Vec::new()),
+    });
+    let launcher = LauncherService::new(
+        CommandRegistry::new(),
+        Vec::new(),
+        vec![ImageAssetDefinition {
+            id: CommandId::from("image-asset:logos/brand.png"),
+            title: "brand.png".into(),
+            relative_path: "logos/brand.png".into(),
+            path: "/tmp/logos/brand.png".into(),
+        }],
+        platform,
+        Arc::new(StubSearchIndex {
+            configured: true,
+            search_results: vec![String::from("image-asset:logos/brand.png")],
+            stats: SearchIndexStats {
+                discovered_count: 0,
+                indexed_count: 1,
+                skipped_count: 0,
+            },
+            last_documents: Mutex::new(Vec::new()),
+        }),
+    );
+
+    let results = launcher.search("brand");
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].kind, SearchResultKind::Image);
+    assert!(results[0].close_launcher_on_success);
+}
+
+#[allow(clippy::unwrap_used)]
+#[test]
+fn execute_routes_image_ids_to_clipboard_copy() {
+    let platform = Arc::new(StubPlatform {
+        apps: Vec::new(),
+        launched: Mutex::new(Vec::new()),
+        opened_urls: Mutex::new(Vec::new()),
+        copied_images: Mutex::new(Vec::new()),
+        browser_tabs: Mutex::new(Vec::new()),
+        focused_browser_tabs: Mutex::new(Vec::new()),
+        process_search_results: Mutex::new(Vec::new()),
+        terminated_pids: Mutex::new(Vec::new()),
+    });
+    let launcher = LauncherService::new(
+        CommandRegistry::new(),
+        Vec::new(),
+        vec![ImageAssetDefinition {
+            id: CommandId::from("image-asset:logos/brand.png"),
+            title: "brand.png".into(),
+            relative_path: "logos/brand.png".into(),
+            path: "/tmp/logos/brand.png".into(),
+        }],
+        platform.clone(),
+        Arc::new(StubSearchIndex {
+            configured: true,
+            search_results: Vec::new(),
+            stats: SearchIndexStats {
+                discovered_count: 0,
+                indexed_count: 0,
+                skipped_count: 0,
+            },
+            last_documents: Mutex::new(Vec::new()),
+        }),
+    );
+
+    let result = launcher
+        .execute_command(&CommandExecutionRequest {
+            command_id: CommandId::from("image-asset:logos/brand.png"),
+            argv: Vec::new(),
+            arguments: HashMap::new(),
+        })
+        .unwrap();
+
+    assert_eq!(
+        result,
+        CommandInvocationResult::Completed {
+            output: "copied brand.png".into()
+        }
+    );
+    assert_eq!(
+        &*platform.copied_images.lock().unwrap(),
+        &[String::from("/tmp/logos/brand.png")]
+    );
 }

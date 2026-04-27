@@ -54,6 +54,32 @@ impl ClipboardAccess for MacOsClipboardAccess {
     }
 }
 
+pub fn copy_image_file_to_clipboard(path: &std::path::Path) -> Result<(), String> {
+    let path = path
+        .to_str()
+        .ok_or_else(|| format!("invalid image path: {}", path.display()))?;
+
+    autoreleasepool(|| unsafe {
+        let image_class = class!(NSImage);
+        let image: *mut Object = msg_send![image_class, alloc];
+        let image: *mut Object = msg_send![image, initWithContentsOfFile: nsstring(path)];
+        if image.is_null() {
+            return Err(format!("failed to load image at {}", path));
+        }
+
+        let array_class = class!(NSArray);
+        let objects: *mut Object = msg_send![array_class, arrayWithObject: image];
+        let pasteboard = general_pasteboard();
+        let _: i64 = msg_send![pasteboard, clearContents];
+        let success: bool = msg_send![pasteboard, writeObjects: objects];
+        if success {
+            Ok(())
+        } else {
+            Err(format!("failed to write image to macOS clipboard: {path}"))
+        }
+    })
+}
+
 pub fn spawn_clipboard_watcher(
     clipboard: Arc<ClipboardHistoryService>,
     access: Arc<MacOsClipboardAccess>,

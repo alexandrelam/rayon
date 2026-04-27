@@ -1,5 +1,6 @@
 mod bookmarks;
 mod discovery;
+mod images;
 mod loader;
 pub(crate) mod manifest;
 
@@ -18,11 +19,13 @@ pub fn load_config() -> Result<LoadedConfig, String> {
         return Ok(LoadedConfig {
             command_providers: Vec::new(),
             bookmarks: Vec::new(),
+            image_assets: Vec::new(),
         });
     }
 
     let mut command_providers: Vec<Arc<dyn CommandProvider>> = Vec::new();
     let mut bookmarks = Vec::new();
+    let image_assets = images::load_images(&config_dir)?;
     let mut bookmark_ids = HashSet::new();
 
     for manifest_path in discovery::manifest_paths(&config_dir)? {
@@ -44,5 +47,6 @@ pub fn load_config() -> Result<LoadedConfig, String> {
     Ok(LoadedConfig {
         command_providers,
         bookmarks,
+        image_assets,
     })
 }

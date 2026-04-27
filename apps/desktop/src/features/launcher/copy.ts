@@ -43,6 +43,9 @@ export function getSearchResultKind(result: SearchResult): string {
   if (result.kind === "browser_tab") {
     return "Tab";
   }
+  if (result.kind === "image") {
+    return "Image";
+  }
   if (result.kind === "application") {
     return "App";
   }

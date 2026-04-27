@@ -337,6 +337,10 @@ mod tests {
             Ok(())
         }
 
+        fn copy_image_to_clipboard(&self, _image_path: &std::path::Path) -> Result<(), String> {
+            Ok(())
+        }
+
         fn search_browser_tabs(&self, _query: &str) -> Result<Vec<BrowserTab>, String> {
             Ok(Vec::new())
         }

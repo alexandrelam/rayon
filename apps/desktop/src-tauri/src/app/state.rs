@@ -281,6 +281,10 @@ mod tests {
             Ok(())
         }
 
+        fn copy_image_to_clipboard(&self, _image_path: &std::path::Path) -> Result<(), String> {
+            Ok(())
+        }
+
         fn search_browser_tabs(&self, _query: &str) -> Result<Vec<BrowserTab>, String> {
             *self.search_calls.lock().unwrap() += 1;
             Ok(self.browser_tabs.lock().unwrap().clone())

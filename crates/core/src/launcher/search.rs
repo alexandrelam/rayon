@@ -19,6 +19,7 @@ impl LauncherService {
         let app_results = read_app_catalog(&self.app_catalog).search_results_by_id();
         search_results.extend(app_results);
         search_results.extend(self.bookmark_catalog.search_results_by_id());
+        search_results.extend(self.image_catalog.search_results_by_id());
 
         let mut results = Vec::new();
         for item_id in item_ids {
@@ -39,6 +40,7 @@ impl LauncherService {
         let app_documents = read_app_catalog(&self.app_catalog).searchable_documents();
         documents.extend(app_documents);
         documents.extend(self.bookmark_catalog.searchable_documents());
+        documents.extend(self.image_catalog.searchable_documents());
         self.search_index.replace_items(&documents)
     }
 }
