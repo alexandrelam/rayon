@@ -24,6 +24,7 @@ vi.mock("./features/launcher/api", () => ({
   refreshThemePreference: vi.fn(),
   registerLauncherOpenedListener: vi.fn(),
   resizeLauncher: vi.fn(),
+  searchBrowserTabs: vi.fn(),
   searchInteractiveSession: vi.fn(),
   searchLauncher: vi.fn(),
   submitLauncherInteractiveSelection: vi.fn(),
@@ -112,6 +113,7 @@ describe("App", () => {
     vi.mocked(launcherApi.registerLauncherOpenedListener).mockResolvedValue(vi.fn());
     vi.mocked(launcherApi.resizeLauncher).mockResolvedValue(undefined);
     vi.mocked(launcherApi.searchLauncher).mockResolvedValue([]);
+    vi.mocked(launcherApi.searchBrowserTabs).mockResolvedValue([]);
     vi.mocked(launcherApi.searchInteractiveSession).mockResolvedValue(
       interactiveSession({ results: [] }),
     );
@@ -170,6 +172,120 @@ describe("App", () => {
     await waitFor(() => {
       expect(launcherApi.executeLauncherCommand).toHaveBeenCalledWith("beta", {}, []);
     });
+  });
+
+  it("uses the default launcher search when the query does not start with a space", async () => {
+    vi.mocked(launcherApi.searchLauncher).mockResolvedValue([
+      searchResult({ id: "alpha", title: "Alpha" }),
+    ]);
+
+    render(<App />);
+
+    const input = screen.getByLabelText("Command search");
+    fireEvent.change(input, { target: { value: "alpha" } });
+
+    expect(await screen.findByText("Alpha")).toBeTruthy();
+    expect(launcherApi.searchLauncher).toHaveBeenCalledWith("alpha");
+    expect(launcherApi.searchBrowserTabs).not.toHaveBeenCalled();
+    expect(input.getAttribute("placeholder")).toBe("Type a command");
+    expect(input.getAttribute("data-mode")).toBe("default");
+  });
+
+  it("uses browser tab search when the query starts with a space", async () => {
+    vi.mocked(launcherApi.searchBrowserTabs).mockResolvedValue([
+      searchResult({
+        id: "browser-tab:chrome:window-1:1",
+        title: "Issue 15",
+        subtitle: "github.com",
+        kind: "browser_tab",
+        close_launcher_on_success: true,
+      }),
+    ]);
+
+    render(<App />);
+
+    const input = screen.getByLabelText("Command search");
+    fireEvent.change(input, { target: { value: " issue" } });
+
+    expect(await screen.findByText("Issue 15")).toBeTruthy();
+    expect(launcherApi.searchBrowserTabs).toHaveBeenCalledWith("issue", true);
+    expect(launcherApi.searchLauncher).not.toHaveBeenCalled();
+    expect(input.getAttribute("placeholder")).toBe("Search open Chrome tabs");
+    expect(input.getAttribute("data-mode")).toBe("browser_tabs");
+  });
+
+  it("shows all tabs when the query is only a leading space", async () => {
+    vi.mocked(launcherApi.searchBrowserTabs).mockResolvedValue([
+      searchResult({
+        id: "browser-tab:chrome:window-1:1",
+        title: "Rayon",
+        subtitle: "github.com",
+        kind: "browser_tab",
+        close_launcher_on_success: true,
+      }),
+    ]);
+
+    render(<App />);
+
+    const input = screen.getByLabelText("Command search");
+    fireEvent.change(input, { target: { value: " " } });
+
+    expect(await screen.findByText("Rayon")).toBeTruthy();
+    expect(launcherApi.searchBrowserTabs).toHaveBeenCalledWith("", true);
+    expect(input.getAttribute("placeholder")).toBe("Search open Chrome tabs");
+  });
+
+  it("refreshes browser tabs only when entering tab mode", async () => {
+    vi.mocked(launcherApi.searchBrowserTabs).mockResolvedValue([
+      searchResult({
+        id: "browser-tab:chrome:window-1:1",
+        title: "Issue 15",
+        subtitle: "github.com",
+        kind: "browser_tab",
+        close_launcher_on_success: true,
+      }),
+    ]);
+
+    render(<App />);
+
+    const input = screen.getByLabelText("Command search");
+    fireEvent.change(input, { target: { value: " issue" } });
+    expect(await screen.findByText("Issue 15")).toBeTruthy();
+
+    fireEvent.change(input, { target: { value: " issue 15" } });
+
+    await waitFor(() => {
+      expect(launcherApi.searchBrowserTabs).toHaveBeenNthCalledWith(1, "issue", true);
+      expect(launcherApi.searchBrowserTabs).toHaveBeenNthCalledWith(2, "issue 15", false);
+    });
+  });
+
+  it("leaves browser tab mode when the leading space is removed", async () => {
+    vi.mocked(launcherApi.searchBrowserTabs).mockResolvedValue([
+      searchResult({
+        id: "browser-tab:chrome:window-1:1",
+        title: "Issue 15",
+        subtitle: "github.com",
+        kind: "browser_tab",
+        close_launcher_on_success: true,
+      }),
+    ]);
+    vi.mocked(launcherApi.searchLauncher).mockResolvedValue([
+      searchResult({ id: "echo", title: "Echo" }),
+    ]);
+
+    render(<App />);
+
+    const input = screen.getByLabelText("Command search");
+    fireEvent.change(input, { target: { value: " issue" } });
+    expect(await screen.findByText("Issue 15")).toBeTruthy();
+
+    fireEvent.change(input, { target: { value: "issue" } });
+
+    expect(await screen.findByText("Echo")).toBeTruthy();
+    expect(launcherApi.searchLauncher).toHaveBeenCalledWith("issue");
+    expect(input.getAttribute("placeholder")).toBe("Type a command");
+    expect(input.getAttribute("data-mode")).toBe("default");
   });
 
   it("validates pending argument entry before executing the command", async () => {

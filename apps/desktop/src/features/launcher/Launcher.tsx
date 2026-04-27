@@ -15,6 +15,7 @@ export function Launcher() {
 
       <LauncherSearchInput
         inputRef={controller.inputRef}
+        mode={controller.inputMode}
         value={controller.query}
         placeholder={controller.placeholder}
         onChange={controller.onQueryChange}

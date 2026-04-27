@@ -307,7 +307,7 @@ fn stderr_or_stdout(output: &std::process::Output) -> Option<String> {
 mod tests {
     use super::*;
     use rayon_core::InteractiveSessionSubmitOutcome;
-    use rayon_types::{CommandId, InstalledApp, ProcessMatch};
+    use rayon_types::{BrowserTab, BrowserTabTarget, CommandId, InstalledApp, ProcessMatch};
     use std::collections::VecDeque;
 
     #[derive(Default)]
@@ -326,6 +326,14 @@ mod tests {
 
         fn open_url(&self, url: &str) -> Result<(), String> {
             self.opened_urls.lock().unwrap().push(url.to_string());
+            Ok(())
+        }
+
+        fn search_browser_tabs(&self, _query: &str) -> Result<Vec<BrowserTab>, String> {
+            Ok(Vec::new())
+        }
+
+        fn focus_browser_tab(&self, _target: &BrowserTabTarget) -> Result<(), String> {
             Ok(())
         }
 

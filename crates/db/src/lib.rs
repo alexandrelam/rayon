@@ -5,7 +5,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use tantivy::collector::TopDocs;
 use tantivy::directory::error::OpenDirectoryError;
-use tantivy::directory::MmapDirectory;
+use tantivy::directory::Directory;
+use tantivy::directory::{MmapDirectory, RamDirectory};
 use tantivy::query::{AllQuery, QueryParser};
 use tantivy::schema::{Field, Schema, Value, STORED, STRING, TEXT};
 use tantivy::{doc, Index, IndexReader, TantivyDocument};
@@ -95,7 +96,7 @@ pub struct TantivySearchIndex {
     index: Index,
     reader: IndexReader,
     fields: SearchIndexFields,
-    path: PathBuf,
+    path: Option<PathBuf>,
 }
 
 impl TantivySearchIndex {
@@ -117,7 +118,19 @@ impl TantivySearchIndex {
             index,
             reader,
             fields,
-            path,
+            path: Some(path),
+        })
+    }
+
+    pub fn create_in_memory() -> Result<Self, TantivySearchIndexError> {
+        let (schema, fields) = SearchIndexFields::build_schema();
+        let (index, reader) = Self::open_index_in_directory(RamDirectory::create(), schema)?;
+
+        Ok(Self {
+            index,
+            reader,
+            fields,
+            path: None,
         })
     }
 
@@ -202,8 +215,8 @@ impl TantivySearchIndex {
         })
     }
 
-    pub fn path(&self) -> &Path {
-        &self.path
+    pub fn path(&self) -> Option<&Path> {
+        self.path.as_deref()
     }
 
     fn open_index(
@@ -211,6 +224,13 @@ impl TantivySearchIndex {
         schema: Schema,
     ) -> Result<(Index, IndexReader), TantivySearchIndexError> {
         let directory = MmapDirectory::open(path)?;
+        Self::open_index_in_directory(directory, schema)
+    }
+
+    fn open_index_in_directory<D: Directory + 'static>(
+        directory: D,
+        schema: Schema,
+    ) -> Result<(Index, IndexReader), TantivySearchIndexError> {
         let index = Index::open_or_create(directory, schema)?;
         let reader = index.reader()?;
         Ok((index, reader))
@@ -250,6 +270,7 @@ fn search_kind(kind: SearchResultKind) -> &'static str {
         SearchResultKind::Command => "command",
         SearchResultKind::Application => "application",
         SearchResultKind::Bookmark => "bookmark",
+        SearchResultKind::BrowserTab => "browser_tab",
     }
 }
 
@@ -491,5 +512,24 @@ mod tests {
 
         let results = reopened.search_item_ids("fresh", 10).unwrap();
         assert_eq!(results, vec![String::from("fresh")]);
+    }
+
+    #[test]
+    fn searches_in_memory_indexes() {
+        let index = TantivySearchIndex::create_in_memory().unwrap();
+        index
+            .replace_items(&[searchable_item(
+                "browser-tab:chrome:window-1:2",
+                SearchResultKind::BrowserTab,
+                "Issue 15",
+                Some("Google Chrome · https://github.com/alexandrelam/rayon/issues/15"),
+                None,
+                "Issue 15 https://github.com/alexandrelam/rayon/issues/15 chrome",
+            )])
+            .unwrap();
+
+        let results = index.search_item_ids("rayon issue", 10).unwrap();
+        assert_eq!(results, vec![String::from("browser-tab:chrome:window-1:2")]);
+        assert!(index.path().is_none());
     }
 }

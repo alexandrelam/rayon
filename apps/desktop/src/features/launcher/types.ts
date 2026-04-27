@@ -2,6 +2,8 @@ import type { KeyboardEventHandler, RefObject } from "react";
 
 import type { PendingExecution } from "@/commandExecution";
 
+export type LauncherInputMode = "default" | "browser_tabs";
+
 export type LauncherResultItemViewModel = {
   id: string;
   title: string;
@@ -34,6 +36,7 @@ export type LauncherController = {
   inputRef: RefObject<HTMLInputElement | null>;
   query: string;
   placeholder: string;
+  inputMode: LauncherInputMode;
   onQueryChange: (nextQuery: string) => void;
   onKeyDown: KeyboardEventHandler<HTMLInputElement>;
   header: LauncherHeaderViewModel;

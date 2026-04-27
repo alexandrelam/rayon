@@ -5,12 +5,46 @@ use crate::test_support::{
 };
 use rayon_db::SearchIndexStats;
 use rayon_types::{
-    BookmarkDefinition, CommandExecutionRequest, CommandId, CommandInvocationResult,
-    InteractiveSessionQueryRequest, InteractiveSessionSubmitRequest,
+    BookmarkDefinition, BrowserTab, BrowserTabTarget, CommandExecutionRequest, CommandId,
+    CommandInvocationResult, InteractiveSessionQueryRequest, InteractiveSessionSubmitRequest,
     InteractiveSessionSubmitResult, SearchResultKind,
 };
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+
+#[allow(clippy::unwrap_used)]
+fn launcher_with_platform(
+    platform: Arc<StubPlatform>,
+    search_results: Vec<String>,
+) -> LauncherService {
+    let mut registry = CommandRegistry::new();
+    registry.register_provider(Arc::new(TestProvider)).unwrap();
+
+    let index = Arc::new(StubSearchIndex {
+        configured: true,
+        search_results,
+        stats: SearchIndexStats {
+            discovered_count: 0,
+            indexed_count: 5,
+            skipped_count: 0,
+        },
+        last_documents: Mutex::new(Vec::new()),
+    });
+
+    LauncherService::new(
+        registry,
+        vec![BookmarkDefinition {
+            id: CommandId::from("bookmark:github"),
+            title: "GitHub".into(),
+            subtitle: Some("https://github.com".into()),
+            owner_plugin_id: "user.bookmarks".into(),
+            url: "https://github.com".into(),
+            keywords: vec!["code".into()],
+        }],
+        platform,
+        index,
+    )
+}
 
 #[allow(clippy::unwrap_used)]
 #[test]
@@ -27,6 +61,74 @@ fn aggregate_search_uses_shared_index_ids() {
     assert_eq!(results[0].kind, SearchResultKind::Command);
     assert_eq!(results[1].kind, SearchResultKind::Application);
     assert_eq!(results[2].kind, SearchResultKind::Bookmark);
+}
+
+#[allow(clippy::unwrap_used)]
+#[test]
+fn aggregate_search_does_not_include_browser_tabs() {
+    let platform = Arc::new(StubPlatform {
+        apps: vec![rayon_types::InstalledApp {
+            id: CommandId::from("app:macos:com.example.arc"),
+            title: "Arc".into(),
+            bundle_identifier: Some("com.example.arc".into()),
+            path: "/Applications/Arc.app".into(),
+        }],
+        launched: Mutex::new(Vec::new()),
+        opened_urls: Mutex::new(Vec::new()),
+        browser_tabs: Mutex::new(vec![BrowserTab {
+            browser: "chrome".into(),
+            window_id: "window-1".into(),
+            window_index: 1,
+            active_tab_index: 2,
+            tab_index: 2,
+            title: "Arc Docs".into(),
+            url: "https://example.com/arc".into(),
+        }]),
+        focused_browser_tabs: Mutex::new(Vec::new()),
+        process_search_results: Mutex::new(Vec::new()),
+        terminated_pids: Mutex::new(Vec::new()),
+    });
+    let launcher = launcher_with_platform(platform, vec![String::from("echo")]);
+
+    let results = launcher.search("arc");
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].kind, SearchResultKind::Command);
+}
+
+#[allow(clippy::unwrap_used)]
+#[test]
+fn search_browser_tabs_returns_matching_browser_tabs() {
+    let platform = Arc::new(StubPlatform {
+        apps: vec![rayon_types::InstalledApp {
+            id: CommandId::from("app:macos:com.example.arc"),
+            title: "Arc".into(),
+            bundle_identifier: Some("com.example.arc".into()),
+            path: "/Applications/Arc.app".into(),
+        }],
+        launched: Mutex::new(Vec::new()),
+        opened_urls: Mutex::new(Vec::new()),
+        browser_tabs: Mutex::new(vec![BrowserTab {
+            browser: "chrome".into(),
+            window_id: "window-1".into(),
+            window_index: 1,
+            active_tab_index: 2,
+            tab_index: 2,
+            title: "Arc Docs".into(),
+            url: "https://example.com/arc".into(),
+        }]),
+        focused_browser_tabs: Mutex::new(Vec::new()),
+        process_search_results: Mutex::new(Vec::new()),
+        terminated_pids: Mutex::new(Vec::new()),
+    });
+    let launcher = launcher_with_platform(platform, vec![String::from("echo")]);
+
+    let results = launcher.search_browser_tabs("arc");
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].kind, SearchResultKind::BrowserTab);
+    assert_eq!(results[0].title, "Arc Docs");
+    assert!(results[0].close_launcher_on_success);
 }
 
 #[allow(clippy::unwrap_used)]
@@ -88,6 +190,54 @@ fn execute_routes_bookmark_ids_to_platform_url_opener() {
         result,
         CommandInvocationResult::Completed {
             output: "opened GitHub".into()
+        }
+    );
+}
+
+#[allow(clippy::unwrap_used)]
+#[test]
+fn execute_routes_browser_tab_ids_to_platform_focus() {
+    let platform = Arc::new(StubPlatform {
+        apps: Vec::new(),
+        launched: Mutex::new(Vec::new()),
+        opened_urls: Mutex::new(Vec::new()),
+        browser_tabs: Mutex::new(vec![BrowserTab {
+            browser: "chrome".into(),
+            window_id: "window-1".into(),
+            window_index: 1,
+            active_tab_index: 4,
+            tab_index: 4,
+            title: "Issue 15".into(),
+            url: "https://github.com/alexandrelam/rayon/issues/15".into(),
+        }]),
+        focused_browser_tabs: Mutex::new(Vec::new()),
+        process_search_results: Mutex::new(Vec::new()),
+        terminated_pids: Mutex::new(Vec::new()),
+    });
+    let launcher = launcher_with_platform(platform.clone(), vec![]);
+
+    let result = launcher
+        .execute_command(&CommandExecutionRequest {
+            command_id: CommandId::from("browser-tab:chrome:window-1:4"),
+            argv: Vec::new(),
+            arguments: HashMap::new(),
+        })
+        .unwrap();
+
+    assert_eq!(
+        result,
+        CommandInvocationResult::Completed {
+            output: "focused Chrome tab".into()
+        }
+    );
+
+    let focused = &platform.focused_browser_tabs.lock().unwrap()[0];
+    assert_eq!(
+        focused,
+        &BrowserTabTarget {
+            browser: "chrome".into(),
+            window_id: "window-1".into(),
+            tab_index: 4,
         }
     );
 }
@@ -175,6 +325,8 @@ fn completed_interactive_submit_removes_active_session() {
         apps: Vec::new(),
         launched: Mutex::new(Vec::new()),
         opened_urls: Mutex::new(Vec::new()),
+        browser_tabs: Mutex::new(Vec::new()),
+        focused_browser_tabs: Mutex::new(Vec::new()),
         process_search_results: Mutex::new(Vec::new()),
         terminated_pids: Mutex::new(Vec::new()),
     });
@@ -240,6 +392,8 @@ fn startup_reindexes_commands_and_apps() {
         }],
         launched: Mutex::new(Vec::new()),
         opened_urls: Mutex::new(Vec::new()),
+        browser_tabs: Mutex::new(Vec::new()),
+        focused_browser_tabs: Mutex::new(Vec::new()),
         process_search_results: Mutex::new(Vec::new()),
         terminated_pids: Mutex::new(Vec::new()),
     });

@@ -20,6 +20,18 @@ pub async fn search(
 }
 
 #[tauri::command]
+pub async fn search_browser_tabs(
+    query: String,
+    refresh: bool,
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<Vec<SearchResult>, String> {
+    let state = Arc::clone(state.inner());
+    tauri::async_runtime::spawn_blocking(move || state.search_browser_tabs(&query, refresh))
+        .await
+        .map_err(|error| format!("launcher task failed: {error}"))
+}
+
+#[tauri::command]
 pub async fn execute_command(
     request: CommandExecutionRequest,
     state: tauri::State<'_, Arc<AppState>>,

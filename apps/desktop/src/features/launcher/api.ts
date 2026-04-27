@@ -25,6 +25,10 @@ export async function searchLauncher(query: string) {
   return invoke<SearchResult[]>("search", { query });
 }
 
+export async function searchBrowserTabs(query: string, refresh = false) {
+  return invoke<SearchResult[]>("search_browser_tabs", { query, refresh });
+}
+
 export async function searchInteractiveSession(sessionId: string, query: string) {
   return invoke<InteractiveSessionState>("search_interactive_session", {
     request: {

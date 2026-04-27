@@ -1,7 +1,7 @@
 use super::service::LauncherService;
 use super::state::read_app_catalog;
 use rayon_db::SearchIndexStats;
-use rayon_types::SearchResult;
+use rayon_types::{CommandInputMode, SearchResult, SearchResultKind};
 
 const SEARCH_LIMIT: usize = 20;
 
@@ -20,10 +20,18 @@ impl LauncherService {
         search_results.extend(app_results);
         search_results.extend(self.bookmark_catalog.search_results_by_id());
 
-        item_ids
-            .into_iter()
-            .filter_map(|item_id| search_results.get(&item_id).cloned())
-            .collect()
+        let mut results = Vec::new();
+        for item_id in item_ids {
+            if let Some(result) = search_results.get(&item_id).cloned() {
+                results.push(result);
+            }
+        }
+
+        results
+    }
+
+    pub fn search_browser_tabs(&self, query: &str) -> Vec<SearchResult> {
+        self.browser_tab_results(query)
     }
 
     pub fn search_enabled(&self) -> bool {
@@ -36,5 +44,34 @@ impl LauncherService {
         documents.extend(app_documents);
         documents.extend(self.bookmark_catalog.searchable_documents());
         self.search_index.replace_items(&documents)
+    }
+
+    fn browser_tab_results(&self, query: &str) -> Vec<SearchResult> {
+        match self.platform.search_browser_tabs(query) {
+            Ok(tabs) => tabs
+                .into_iter()
+                .take(SEARCH_LIMIT)
+                .map(|tab| {
+                    let subtitle = tab.subtitle();
+                    SearchResult {
+                        id: tab.command_id(),
+                        title: tab.title,
+                        subtitle: Some(subtitle),
+                        icon_path: None,
+                        kind: SearchResultKind::BrowserTab,
+                        owner_plugin_id: None,
+                        keywords: Vec::new(),
+                        starts_interactive_session: false,
+                        close_launcher_on_success: true,
+                        input_mode: CommandInputMode::Structured,
+                        arguments: Vec::new(),
+                    }
+                })
+                .collect(),
+            Err(error) => {
+                eprintln!("browser tab search failed: {error}");
+                Vec::new()
+            }
+        }
     }
 }

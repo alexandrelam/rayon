@@ -24,6 +24,7 @@ import {
   hideLauncherAndRestoreFocus,
   refreshThemePreference,
   registerLauncherOpenedListener,
+  searchBrowserTabs,
   searchInteractiveSession,
   searchLauncher,
   submitLauncherInteractiveSelection,
@@ -42,6 +43,7 @@ import type {
   LauncherController,
   LauncherFooterViewModel,
   LauncherHeaderViewModel,
+  LauncherInputMode,
   LauncherResultItemViewModel,
 } from "./types";
 
@@ -51,6 +53,7 @@ export function useLauncherController(): LauncherController {
   const resultItemRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const interactiveSearchRequestId = useRef(0);
   const optimisticSessionCounter = useRef(0);
+  const previousQueryRef = useRef("");
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [interactiveSession, setInteractiveSession] = useState<InteractiveSessionState | null>(
@@ -130,15 +133,29 @@ export function useLauncherController(): LauncherController {
   }, []);
 
   useEffect(() => {
+    const previousQuery = previousQueryRef.current;
+
     if (!shouldRunSearch({ query, pendingExecution, interactiveSession })) {
       return;
     }
 
+    const searchMode = getLauncherInputMode(query);
+    const refreshBrowserTabs =
+      searchMode === "browser_tabs" && getLauncherInputMode(previousQuery) !== "browser_tabs";
     let cancelled = false;
 
     async function runSearch() {
       try {
-        const nextResults = await resolveLauncherSearch(query);
+        const nextResults =
+          searchMode === "browser_tabs"
+            ? {
+                results: await searchBrowserTabs(
+                  normalizeBrowserTabQuery(query),
+                  refreshBrowserTabs,
+                ),
+                inlineFallbackArgv: [],
+              }
+            : await resolveLauncherSearch(query);
         if (cancelled) {
           return;
         }
@@ -171,6 +188,10 @@ export function useLauncherController(): LauncherController {
       cancelled = true;
     };
   }, [interactiveSession, pendingExecution, query]);
+
+  useEffect(() => {
+    previousQueryRef.current = query;
+  }, [query]);
 
   useEffect(() => {
     if (!interactiveSessionId || interactiveSessionId.startsWith("pending:")) {
@@ -571,6 +592,8 @@ export function useLauncherController(): LauncherController {
   };
 
   const activeArgument = currentArgument(pendingExecution);
+  const inputMode: LauncherInputMode =
+    pendingExecution || interactiveSession ? "default" : getLauncherInputMode(query);
   const viewState = getLauncherViewState({
     query,
     results,
@@ -693,7 +716,10 @@ export function useLauncherController(): LauncherController {
         : activeArgument.label
       : interactiveSession
         ? interactiveSession.input_placeholder
-        : "Type a command",
+        : inputMode === "browser_tabs"
+          ? "Search open Chrome tabs"
+          : "Type a command",
+    inputMode,
     onQueryChange,
     onKeyDown,
     header,
@@ -726,6 +752,14 @@ export function useLauncherController(): LauncherController {
     },
     pendingExecution,
   };
+}
+
+function getLauncherInputMode(query: string): LauncherInputMode {
+  return query.startsWith(" ") ? "browser_tabs" : "default";
+}
+
+function normalizeBrowserTabQuery(query: string): string {
+  return query.slice(1).trim();
 }
 
 async function resolveLauncherSearch(query: string): Promise<{

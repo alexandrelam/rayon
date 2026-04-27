@@ -40,6 +40,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             invoke::launcher::search,
+            invoke::launcher::search_browser_tabs,
             invoke::launcher::execute_command,
             invoke::launcher::search_interactive_session,
             invoke::launcher::submit_interactive_session,
