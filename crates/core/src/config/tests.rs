@@ -52,6 +52,7 @@ base_args = ["hello"]
     assert_eq!(loaded.command_providers.len(), 1);
     let commands = loaded.command_providers[0].commands();
     assert_eq!(commands[0].owner_plugin_id, "user.commands");
+    assert!(!commands[0].close_launcher_on_success);
 }
 
 #[allow(clippy::unwrap_used)]
@@ -164,4 +165,39 @@ positional = 0
     assert_eq!(commands.len(), 1);
     assert_eq!(commands[0].id.to_string(), "user.echo");
     assert!(commands[0].arguments.is_empty());
+}
+
+#[allow(clippy::unwrap_used)]
+#[test]
+fn loads_close_launcher_on_success_for_custom_commands() {
+    let _env_guard = env_lock().lock().unwrap();
+    let config_home = unique_dir();
+    let rayon_dir = config_home.join("rayon");
+    fs::create_dir_all(&rayon_dir).unwrap();
+    fs::write(
+        rayon_dir.join("commands.toml"),
+        r#"
+plugin_id = "user.commands"
+
+[[commands]]
+id = "user.echo"
+title = "Echo"
+program = "/bin/echo"
+close_launcher_on_success = true
+"#,
+    )
+    .unwrap();
+
+    let previous = env::var_os("XDG_CONFIG_HOME");
+    env::set_var("XDG_CONFIG_HOME", &config_home);
+    let loaded = load_config().unwrap();
+    if let Some(previous) = previous {
+        env::set_var("XDG_CONFIG_HOME", previous);
+    } else {
+        env::remove_var("XDG_CONFIG_HOME");
+    }
+
+    let commands = loaded.command_providers[0].commands();
+    assert_eq!(commands.len(), 1);
+    assert!(commands[0].close_launcher_on_success);
 }

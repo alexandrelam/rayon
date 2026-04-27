@@ -73,6 +73,7 @@ impl CommandProvider for GitHubMyPrsProvider {
                 "pr".into(),
                 "pull request".into(),
             ],
+            close_launcher_on_success: false,
             input_mode: CommandInputMode::Structured,
             arguments: Vec::new(),
         }]

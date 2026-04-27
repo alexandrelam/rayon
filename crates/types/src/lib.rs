@@ -97,6 +97,8 @@ pub struct CommandDefinition {
     #[serde(default)]
     pub keywords: Vec<String>,
     #[serde(default)]
+    pub close_launcher_on_success: bool,
+    #[serde(default)]
     pub input_mode: CommandInputMode,
     #[serde(default)]
     pub arguments: Vec<CommandArgumentDefinition>,
@@ -126,6 +128,8 @@ pub struct SearchResult {
     pub keywords: Vec<String>,
     #[serde(default)]
     pub starts_interactive_session: bool,
+    #[serde(default)]
+    pub close_launcher_on_success: bool,
     #[serde(default)]
     pub input_mode: CommandInputMode,
     #[serde(default)]

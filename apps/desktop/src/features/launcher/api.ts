@@ -66,6 +66,10 @@ export async function hideLauncher() {
   await invoke("hide_launcher");
 }
 
+export async function hideLauncherAndRestoreFocus() {
+  await invoke("hide_launcher_and_restore_focus");
+}
+
 export async function resizeLauncher(height: number) {
   await invoke("resize_launcher", { height });
 }

@@ -20,6 +20,7 @@ export type SearchResult = {
   owner_plugin_id: string | null;
   keywords: string[];
   starts_interactive_session: boolean;
+  close_launcher_on_success: boolean;
   input_mode: CommandInputMode;
   arguments: CommandArgumentDefinition[];
 };
@@ -61,6 +62,7 @@ export type CommandArgumentValue =
 export type PendingExecution = {
   commandId: string;
   commandTitle: string;
+  closeLauncherOnSuccess: boolean;
   arguments: CommandArgumentDefinition[];
   values: Partial<Record<string, CommandArgumentValue>>;
   currentIndex: number;
@@ -95,6 +97,7 @@ export function beginPendingExecution(result: SearchResult): PendingExecution | 
   return {
     commandId: result.id,
     commandTitle: result.title,
+    closeLauncherOnSuccess: result.close_launcher_on_success,
     arguments: result.arguments,
     values: {},
     currentIndex: 0,

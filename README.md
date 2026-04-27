@@ -117,6 +117,7 @@ title = "git-status"
 program = "/usr/bin/git"
 base_args = ["status"]
 keywords = ["gs"]
+close_launcher_on_success = true
 ```
 
 Typing `git-status ~/work/repo` runs the command in one line and passes `~/work/repo` as a trailing argv argument.

@@ -20,6 +20,7 @@ vi.mock("@tauri-apps/api/app", () => ({
 vi.mock("./features/launcher/api", () => ({
   executeLauncherCommand: vi.fn(),
   hideLauncher: vi.fn(),
+  hideLauncherAndRestoreFocus: vi.fn(),
   refreshThemePreference: vi.fn(),
   registerLauncherOpenedListener: vi.fn(),
   resizeLauncher: vi.fn(),
@@ -46,6 +47,7 @@ const searchResult = (overrides: Partial<SearchResult> = {}): SearchResult => ({
   owner_plugin_id: "user.commands",
   keywords: [],
   starts_interactive_session: false,
+  close_launcher_on_success: false,
   input_mode: "structured",
   arguments: [],
   ...overrides,
@@ -123,6 +125,7 @@ describe("App", () => {
       output: "opened",
     });
     vi.mocked(launcherApi.hideLauncher).mockResolvedValue(undefined);
+    vi.mocked(launcherApi.hideLauncherAndRestoreFocus).mockResolvedValue(undefined);
   });
 
   it("renders the idle launcher state", async () => {
@@ -396,5 +399,28 @@ describe("App", () => {
 
     expect(await screen.findByText("Command input contains an unclosed quote.")).toBeTruthy();
     expect(launcherApi.executeLauncherCommand).not.toHaveBeenCalledWith("user.echo", {}, []);
+  });
+
+  it("hides the launcher and restores focus for successful auto-close commands", async () => {
+    vi.mocked(launcherApi.searchLauncher).mockResolvedValue([
+      searchResult({
+        id: "user.git-status",
+        title: "Git Status",
+        close_launcher_on_success: true,
+      }),
+    ]);
+
+    render(<App />);
+
+    const input = screen.getByLabelText("Command search");
+    fireEvent.change(input, { target: { value: "git" } });
+
+    expect(await screen.findByText("Git Status")).toBeTruthy();
+    await userEvent.keyboard("{Enter}");
+
+    await waitFor(() => {
+      expect(launcherApi.hideLauncherAndRestoreFocus).toHaveBeenCalled();
+    });
+    expect(screen.queryByText("done")).toBeNull();
   });
 });

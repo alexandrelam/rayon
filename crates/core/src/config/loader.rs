@@ -36,6 +36,7 @@ pub(super) fn load_manifest_bundle(
             subtitle: command.subtitle.clone(),
             owner_plugin_id: plugin_id.clone(),
             keywords: command.keywords.clone().unwrap_or_default(),
+            close_launcher_on_success: command.close_launcher_on_success,
             input_mode: CommandInputMode::RawArgv,
             arguments: Vec::new(),
         };
