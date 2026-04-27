@@ -10,6 +10,7 @@ use rayon_types::{
     CommandId, CommandInputMode, InstalledApp, InteractiveSessionCompletionBehavior,
     InteractiveSessionMetadata, InteractiveSessionResult, ProcessMatch, SearchableItemDocument,
 };
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 pub(crate) struct TestProvider;
@@ -177,6 +178,7 @@ pub(crate) struct StubPlatform {
     pub apps: Vec<InstalledApp>,
     pub launched: Mutex<Vec<String>>,
     pub opened_urls: Mutex<Vec<String>>,
+    pub copied_images: Mutex<Vec<String>>,
     pub browser_tabs: Mutex<Vec<BrowserTab>>,
     pub focused_browser_tabs: Mutex<Vec<BrowserTabTarget>>,
     pub process_search_results: Mutex<Vec<ProcessMatch>>,
@@ -195,6 +197,14 @@ impl AppPlatform for StubPlatform {
 
     fn open_url(&self, url: &str) -> Result<(), String> {
         self.opened_urls.lock().unwrap().push(url.to_string());
+        Ok(())
+    }
+
+    fn copy_image_to_clipboard(&self, image_path: &Path) -> Result<(), String> {
+        self.copied_images
+            .lock()
+            .unwrap()
+            .push(image_path.display().to_string());
         Ok(())
     }
 
@@ -266,6 +276,7 @@ pub(crate) fn build_launcher_service(search_results: Vec<String>) -> LauncherSer
         }],
         launched: Mutex::new(Vec::new()),
         opened_urls: Mutex::new(Vec::new()),
+        copied_images: Mutex::new(Vec::new()),
         browser_tabs: Mutex::new(Vec::new()),
         focused_browser_tabs: Mutex::new(Vec::new()),
         process_search_results: Mutex::new(Vec::new()),
@@ -292,6 +303,7 @@ pub(crate) fn build_launcher_service(search_results: Vec<String>) -> LauncherSer
             url: "https://github.com".into(),
             keywords: vec!["git".into(), "repos".into()],
         }],
+        Vec::new(),
         platform,
         index,
     )

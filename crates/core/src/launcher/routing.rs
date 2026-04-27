@@ -6,12 +6,14 @@ pub(super) enum ExecutionTarget {
     App(CommandId),
     BrowserTab(BrowserTabTarget),
     Bookmark(CommandId),
+    Image(CommandId),
     Provider(CommandId),
 }
 
 pub(super) fn resolve_execution_target(
     command_id: &CommandId,
     bookmark_exists: bool,
+    image_exists: bool,
 ) -> ExecutionTarget {
     if command_id.as_str() == APP_REINDEX_COMMAND_ID {
         return ExecutionTarget::Reindex;
@@ -27,6 +29,10 @@ pub(super) fn resolve_execution_target(
 
     if bookmark_exists {
         return ExecutionTarget::Bookmark(command_id.clone());
+    }
+
+    if image_exists {
+        return ExecutionTarget::Image(command_id.clone());
     }
 
     ExecutionTarget::Provider(command_id.clone())

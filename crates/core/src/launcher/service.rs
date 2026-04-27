@@ -1,7 +1,7 @@
 use super::state::ActiveInteractiveSession;
-use crate::catalog::{AppCatalog, AppPlatform, BookmarkCatalog, SearchIndex};
+use crate::catalog::{AppCatalog, AppPlatform, BookmarkCatalog, ImageCatalog, SearchIndex};
 use crate::commands::CommandRegistry;
-use rayon_types::BookmarkDefinition;
+use rayon_types::{BookmarkDefinition, ImageAssetDefinition};
 use std::collections::HashMap;
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, RwLock};
@@ -12,6 +12,7 @@ pub struct LauncherService {
     pub(super) search_index: Arc<dyn SearchIndex>,
     pub(super) app_catalog: RwLock<AppCatalog>,
     pub(super) bookmark_catalog: BookmarkCatalog,
+    pub(super) image_catalog: ImageCatalog,
     pub(super) interactive_sessions: RwLock<HashMap<String, ActiveInteractiveSession>>,
     pub(super) next_session_id: AtomicU64,
 }
@@ -20,6 +21,7 @@ impl LauncherService {
     pub fn new(
         registry: CommandRegistry,
         bookmarks: Vec<BookmarkDefinition>,
+        images: Vec<ImageAssetDefinition>,
         platform: Arc<dyn AppPlatform>,
         search_index: Arc<dyn SearchIndex>,
     ) -> Self {
@@ -37,6 +39,7 @@ impl LauncherService {
             search_index,
             app_catalog: RwLock::new(app_catalog),
             bookmark_catalog: BookmarkCatalog::from_bookmarks(bookmarks),
+            image_catalog: ImageCatalog::from_images(images),
             interactive_sessions: RwLock::new(HashMap::new()),
             next_session_id: AtomicU64::new(1),
         };

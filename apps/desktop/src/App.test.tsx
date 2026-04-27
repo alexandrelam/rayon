@@ -216,6 +216,26 @@ describe("App", () => {
     expect(input.getAttribute("data-mode")).toBe("browser_tabs");
   });
 
+  it("renders image results with the image badge", async () => {
+    vi.mocked(launcherApi.searchLauncher).mockResolvedValue([
+      searchResult({
+        id: "image-asset:assets/logos/brand.png",
+        title: "brand.png",
+        subtitle: "assets/logos/brand.png",
+        kind: "image",
+        close_launcher_on_success: true,
+      }),
+    ]);
+
+    render(<App />);
+
+    const input = screen.getByLabelText("Command search");
+    fireEvent.change(input, { target: { value: "brand" } });
+
+    expect(await screen.findByText("brand.png")).toBeTruthy();
+    expect(await screen.findByText("Image")).toBeTruthy();
+  });
+
   it("shows all tabs when the query is only a leading space", async () => {
     vi.mocked(launcherApi.searchBrowserTabs).mockResolvedValue([
       searchResult({

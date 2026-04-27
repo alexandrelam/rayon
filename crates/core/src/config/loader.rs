@@ -3,7 +3,7 @@ use super::manifest::PluginManifest;
 use crate::declarative_provider::{DeclarativeCommandProvider, ExecutableCommandSpec};
 use crate::CommandProvider;
 use rayon_types::CommandInputMode;
-use rayon_types::{BookmarkDefinition, CommandDefinition, CommandId};
+use rayon_types::{BookmarkDefinition, CommandDefinition, CommandId, ImageAssetDefinition};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -11,6 +11,7 @@ use std::sync::Arc;
 pub struct LoadedConfig {
     pub command_providers: Vec<Arc<dyn CommandProvider>>,
     pub bookmarks: Vec<BookmarkDefinition>,
+    pub image_assets: Vec<ImageAssetDefinition>,
 }
 
 pub(super) struct LoadedManifestBundle {

@@ -30,6 +30,10 @@ impl AppPlatform for DesktopPlatform {
         self.inner.open_url(url)
     }
 
+    fn copy_image_to_clipboard(&self, image_path: &std::path::Path) -> Result<(), String> {
+        super::clipboard::copy_image_file_to_clipboard(image_path)
+    }
+
     fn search_browser_tabs(&self, query: &str) -> Result<Vec<BrowserTab>, String> {
         self.inner.search_browser_tabs(query)
     }

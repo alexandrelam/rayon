@@ -16,6 +16,7 @@ impl LauncherService {
         match resolve_execution_target(
             &request.command_id,
             self.bookmark_catalog.get(&request.command_id).is_some(),
+            self.image_catalog.get(&request.command_id).is_some(),
         ) {
             ExecutionTarget::Reindex => {
                 let result = self.refresh_and_reindex()?;
@@ -37,6 +38,12 @@ impl LauncherService {
             }
             ExecutionTarget::Bookmark(bookmark_id) => {
                 let result = self.open_bookmark(&bookmark_id)?;
+                Ok(CommandInvocationResult::Completed {
+                    output: result.output,
+                })
+            }
+            ExecutionTarget::Image(image_id) => {
+                let result = self.copy_image(&image_id)?;
                 Ok(CommandInvocationResult::Completed {
                     output: result.output,
                 })
@@ -125,6 +132,22 @@ impl LauncherService {
 
         Ok(CommandExecutionResult {
             output: "focused Chrome tab".into(),
+        })
+    }
+
+    fn copy_image(&self, image_id: &CommandId) -> Result<CommandExecutionResult, LauncherError> {
+        let image = self
+            .image_catalog
+            .get(image_id)
+            .cloned()
+            .ok_or_else(|| LauncherError::AppNotFound(image_id.clone()))?;
+
+        self.platform
+            .copy_image_to_clipboard(std::path::Path::new(&image.path))
+            .map_err(LauncherError::Platform)?;
+
+        Ok(CommandExecutionResult {
+            output: format!("copied {}", image.title),
         })
     }
 

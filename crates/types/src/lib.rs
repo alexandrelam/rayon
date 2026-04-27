@@ -255,7 +255,16 @@ pub enum SearchResultKind {
     Command,
     Application,
     Bookmark,
+    Image,
     BrowserTab,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImageAssetDefinition {
+    pub id: CommandId,
+    pub title: String,
+    pub relative_path: String,
+    pub path: String,
 }
 
 pub const BROWSER_TAB_COMMAND_PREFIX: &str = "browser-tab";

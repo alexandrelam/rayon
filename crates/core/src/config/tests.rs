@@ -201,3 +201,55 @@ close_launcher_on_success = true
     assert_eq!(commands.len(), 1);
     assert!(commands[0].close_launcher_on_success);
 }
+
+#[allow(clippy::unwrap_used)]
+#[test]
+fn loads_nested_images_from_fixed_images_directory() {
+    let _env_guard = env_lock().lock().unwrap();
+    let config_home = unique_dir();
+    let rayon_dir = config_home.join("rayon");
+    let image_dir = rayon_dir.join("images").join("assets").join("logos");
+    fs::create_dir_all(&image_dir).unwrap();
+    fs::write(image_dir.join("brand.png"), b"png").unwrap();
+    fs::write(image_dir.join("ignore.txt"), b"text").unwrap();
+
+    let previous = env::var_os("XDG_CONFIG_HOME");
+    env::set_var("XDG_CONFIG_HOME", &config_home);
+    let loaded = load_config().unwrap();
+    if let Some(previous) = previous {
+        env::set_var("XDG_CONFIG_HOME", previous);
+    } else {
+        env::remove_var("XDG_CONFIG_HOME");
+    }
+
+    assert_eq!(loaded.image_assets.len(), 1);
+    assert_eq!(loaded.image_assets[0].title, "brand.png");
+    assert_eq!(
+        loaded.image_assets[0].relative_path,
+        "assets/logos/brand.png"
+    );
+    assert_eq!(
+        loaded.image_assets[0].id,
+        rayon_types::CommandId::from("image-asset:assets/logos/brand.png")
+    );
+}
+
+#[allow(clippy::unwrap_used)]
+#[test]
+fn missing_images_directory_is_allowed() {
+    let _env_guard = env_lock().lock().unwrap();
+    let config_home = unique_dir();
+    let rayon_dir = config_home.join("rayon");
+    fs::create_dir_all(&rayon_dir).unwrap();
+
+    let previous = env::var_os("XDG_CONFIG_HOME");
+    env::set_var("XDG_CONFIG_HOME", &config_home);
+    let loaded = load_config().unwrap();
+    if let Some(previous) = previous {
+        env::set_var("XDG_CONFIG_HOME", previous);
+    } else {
+        env::remove_var("XDG_CONFIG_HOME");
+    }
+
+    assert!(loaded.image_assets.is_empty());
+}

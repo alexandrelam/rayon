@@ -1,13 +1,16 @@
 use rayon_types::{
-    BookmarkDefinition, BrowserTab, BrowserTabTarget, CommandId, CommandInputMode, InstalledApp,
-    ProcessMatch, SearchIndexStats, SearchResult, SearchResultKind, SearchableItemDocument,
+    BookmarkDefinition, BrowserTab, BrowserTabTarget, CommandId, CommandInputMode,
+    ImageAssetDefinition, InstalledApp, ProcessMatch, SearchIndexStats, SearchResult,
+    SearchResultKind, SearchableItemDocument,
 };
 use std::collections::HashMap;
+use std::path::Path;
 
 pub trait AppPlatform: Send + Sync {
     fn discover_apps(&self) -> Result<Vec<InstalledApp>, String>;
     fn launch_app(&self, app: &InstalledApp) -> Result<(), String>;
     fn open_url(&self, url: &str) -> Result<(), String>;
+    fn copy_image_to_clipboard(&self, image_path: &Path) -> Result<(), String>;
     fn search_browser_tabs(&self, query: &str) -> Result<Vec<BrowserTab>, String>;
     fn focus_browser_tab(&self, target: &BrowserTabTarget) -> Result<(), String>;
     fn search_processes(&self, query: &str) -> Result<Vec<ProcessMatch>, String>;
@@ -148,4 +151,67 @@ fn bookmark_search_text(definition: &BookmarkDefinition) -> String {
     }
     parts.extend(definition.keywords.clone());
     parts.join(" ")
+}
+
+#[derive(Default)]
+pub(crate) struct ImageCatalog {
+    by_id: HashMap<String, ImageAssetDefinition>,
+}
+
+impl ImageCatalog {
+    pub(crate) fn from_images(images: Vec<ImageAssetDefinition>) -> Self {
+        let mut by_id = HashMap::new();
+        for image in images {
+            by_id.insert(image.id.to_string(), image);
+        }
+
+        Self { by_id }
+    }
+
+    pub(crate) fn get(&self, image_id: &CommandId) -> Option<&ImageAssetDefinition> {
+        self.by_id.get(image_id.as_str())
+    }
+
+    pub(crate) fn search_results_by_id(&self) -> HashMap<String, SearchResult> {
+        self.by_id
+            .values()
+            .map(|image| {
+                (
+                    image.id.to_string(),
+                    SearchResult {
+                        id: image.id.clone(),
+                        title: image.title.clone(),
+                        subtitle: Some(image.relative_path.clone()),
+                        icon_path: None,
+                        kind: SearchResultKind::Image,
+                        owner_plugin_id: None,
+                        keywords: Vec::new(),
+                        starts_interactive_session: false,
+                        close_launcher_on_success: true,
+                        input_mode: CommandInputMode::Structured,
+                        arguments: Vec::new(),
+                    },
+                )
+            })
+            .collect()
+    }
+
+    pub(crate) fn searchable_documents(&self) -> Vec<SearchableItemDocument> {
+        self.by_id
+            .values()
+            .map(|image| SearchableItemDocument {
+                id: image.id.clone(),
+                kind: SearchResultKind::Image,
+                title: image.title.clone(),
+                subtitle: Some(image.relative_path.clone()),
+                owner_plugin_id: None,
+                search_text: image_search_text(image),
+            })
+            .collect()
+    }
+}
+
+fn image_search_text(image: &ImageAssetDefinition) -> String {
+    let path_tokens = image.relative_path.replace(['/', '\\'], " ");
+    format!("{} {} {}", image.title, image.relative_path, path_tokens)
 }
