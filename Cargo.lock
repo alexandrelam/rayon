@@ -3196,7 +3196,7 @@ dependencies = [
 
 [[package]]
 name = "rayon-core"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "rayon-db",
  "rayon-platform",
@@ -3218,7 +3218,7 @@ dependencies = [
 
 [[package]]
 name = "rayon-db"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "rayon-types",
  "tantivy",
@@ -3226,10 +3226,10 @@ dependencies = [
 
 [[package]]
 name = "rayon-desktop"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "objc",
- "rayon-core 0.3.0",
+ "rayon-core 0.4.0",
  "rayon-db",
  "rayon-features",
  "rayon-platform",
@@ -3244,9 +3244,9 @@ dependencies = [
 
 [[package]]
 name = "rayon-features"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
- "rayon-core 0.3.0",
+ "rayon-core 0.4.0",
  "rayon-types",
  "serde",
  "serde_json",
@@ -3254,7 +3254,7 @@ dependencies = [
 
 [[package]]
 name = "rayon-platform"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "plist",
  "rayon-types",
@@ -3262,7 +3262,7 @@ dependencies = [
 
 [[package]]
 name = "rayon-types"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "serde",
 ]
