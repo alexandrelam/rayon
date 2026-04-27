@@ -1,6 +1,9 @@
 import type { InteractiveSessionState, SearchResult } from "@/commandExecution";
 
 export function getInteractiveResultKind(session: InteractiveSessionState): string {
+  if (session.command_id === "clipboard") {
+    return "Clipboard";
+  }
   if (session.command_id === "kill") {
     return "Process";
   }
@@ -11,6 +14,9 @@ export function getInteractiveResultKind(session: InteractiveSessionState): stri
 }
 
 export function getInteractiveEmptyState(session: InteractiveSessionState): string {
+  if (session.command_id === "clipboard") {
+    return "No clipboard items found.";
+  }
   if (session.command_id === "kill") {
     return "No matching processes.";
   }
@@ -21,6 +27,9 @@ export function getInteractiveEmptyState(session: InteractiveSessionState): stri
 }
 
 export function getInteractiveSubmitHint(session: InteractiveSessionState): string {
+  if (session.command_id === "clipboard") {
+    return "Press Enter to copy the selected item and close Rayon.";
+  }
   if (session.command_id === "kill") {
     return "Press Enter to terminate the selected process.";
   }

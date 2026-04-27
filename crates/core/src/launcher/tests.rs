@@ -6,8 +6,8 @@ use crate::test_support::{
 use rayon_db::SearchIndexStats;
 use rayon_types::{
     BookmarkDefinition, BrowserTab, BrowserTabTarget, CommandExecutionRequest, CommandId,
-    CommandInvocationResult, InteractiveSessionQueryRequest, InteractiveSessionSubmitRequest,
-    InteractiveSessionSubmitResult, SearchResultKind,
+    CommandInvocationResult, InteractiveSessionCompletionBehavior, InteractiveSessionQueryRequest,
+    InteractiveSessionSubmitRequest, InteractiveSessionSubmitResult, SearchResultKind,
 };
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -264,6 +264,10 @@ fn execute_starts_interactive_session_for_kill() {
     };
     assert_eq!(session.command_id, CommandId::from("kill"));
     assert_eq!(session.title, "Kill Process");
+    assert_eq!(
+        session.completion_behavior,
+        InteractiveSessionCompletionBehavior::HideLauncher
+    );
     assert!(session.is_loading);
     assert!(session.results.is_empty());
 }
@@ -297,6 +301,10 @@ fn interactive_session_search_and_submit_route_to_provider() {
     assert_eq!(searched.query, "8080");
     assert!(!searched.is_loading);
     assert_eq!(searched.results[0].id, "result:8080");
+    assert_eq!(
+        searched.completion_behavior,
+        InteractiveSessionCompletionBehavior::HideLauncher
+    );
 
     let submitted = launcher
         .submit_interactive_session(&InteractiveSessionSubmitRequest {
@@ -364,7 +372,8 @@ fn completed_interactive_submit_removes_active_session() {
     assert_eq!(
         result,
         InteractiveSessionSubmitResult::Completed {
-            output: "opened example/repo#1".into()
+            output: "opened example/repo#1".into(),
+            completion_behavior: InteractiveSessionCompletionBehavior::HideLauncher,
         }
     );
 

@@ -27,6 +27,7 @@ impl LauncherService {
             title: session.metadata.title,
             subtitle: session.metadata.subtitle,
             input_placeholder: session.metadata.input_placeholder,
+            completion_behavior: session.metadata.completion_behavior,
             query: request.query.clone(),
             is_loading: false,
             results,
@@ -55,6 +56,7 @@ impl LauncherService {
                         title: session.metadata.title,
                         subtitle: session.metadata.subtitle,
                         input_placeholder: session.metadata.input_placeholder,
+                        completion_behavior: session.metadata.completion_behavior,
                         query: request.query.clone(),
                         is_loading: false,
                         results: update.results,
@@ -66,6 +68,7 @@ impl LauncherService {
                 write_interactive_sessions(&self.interactive_sessions).remove(&request.session_id);
                 Ok(InteractiveSessionSubmitResult::Completed {
                     output: result.output,
+                    completion_behavior: session.metadata.completion_behavior,
                 })
             }
         }

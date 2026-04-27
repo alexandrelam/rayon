@@ -1,7 +1,7 @@
-use super::{launcher, paths};
+use super::{clipboard, launcher, paths};
 use rayon_core::{AppPlatform, LauncherService, SearchIndex};
 use rayon_db::TantivySearchIndex;
-use rayon_features::ThemeSettingsStore;
+use rayon_features::{ClipboardHistoryService, ThemeSettingsStore};
 use rayon_platform::MacOsAppManager;
 use rayon_types::{
     BrowserTab, CommandExecutionRequest, CommandExecutionResult, CommandInvocationResult,
@@ -18,6 +18,7 @@ pub struct AppState {
     launcher: RwLock<LauncherService>,
     platform: Arc<dyn AppPlatform>,
     search_index: Arc<dyn SearchIndex>,
+    clipboard_history: Arc<ClipboardHistoryService>,
     theme_settings: Arc<ThemeSettingsStore>,
     browser_tab_search_cache: Mutex<BrowserTabSearchCache>,
 }
@@ -29,16 +30,27 @@ impl AppState {
                 .map_err(|error| error.to_string())?,
         );
         let platform = Arc::new(MacOsAppManager);
+        let clipboard_access = Arc::new(clipboard::MacOsClipboardAccess);
+        let clipboard_history = Arc::new(ClipboardHistoryService::new(
+            clipboard_access.clone(),
+            paths::app_clipboard_history_path(app)?,
+        )?);
         let theme_settings = Arc::new(ThemeSettingsStore::new(paths::app_theme_settings_path(
             app,
         )?));
-        let launcher =
-            launcher::build_launcher(platform.clone(), app_index.clone(), theme_settings.clone())?;
+        let launcher = launcher::build_launcher(
+            platform.clone(),
+            app_index.clone(),
+            clipboard_history.clone(),
+            theme_settings.clone(),
+        )?;
+        clipboard::spawn_clipboard_watcher(clipboard_history.clone(), clipboard_access);
 
         Ok(Self {
             launcher: RwLock::new(launcher),
             platform,
             search_index: app_index,
+            clipboard_history,
             theme_settings,
             browser_tab_search_cache: Mutex::new(BrowserTabSearchCache::new()?),
         })
@@ -49,6 +61,7 @@ impl AppState {
             &self.launcher,
             self.platform.clone(),
             self.search_index.clone(),
+            self.clipboard_history.clone(),
             self.theme_settings.clone(),
         )
     }

@@ -62,6 +62,7 @@ const interactiveSession = (
   title: "Kill Process",
   subtitle: "Search by app, process, or port",
   input_placeholder: "Search process name or port 8080",
+  completion_behavior: "hide_launcher",
   query: "",
   is_loading: false,
   results: [
@@ -125,6 +126,7 @@ describe("App", () => {
     vi.mocked(launcherApi.submitLauncherInteractiveSelection).mockResolvedValue({
       kind: "completed",
       output: "opened",
+      completion_behavior: "hide_launcher",
     });
     vi.mocked(launcherApi.hideLauncher).mockResolvedValue(undefined);
     vi.mocked(launcherApi.hideLauncherAndRestoreFocus).mockResolvedValue(undefined);
@@ -384,6 +386,65 @@ describe("App", () => {
     await waitFor(() => {
       expect(launcherApi.hideLauncher).toHaveBeenCalled();
     });
+  });
+
+  it("restores focus after selecting a clipboard history item", async () => {
+    const session = interactiveSession({
+      command_id: "clipboard",
+      title: "Clipboard History",
+      subtitle: "Search your recent clipboard entries",
+      input_placeholder: "Search clipboard history",
+      completion_behavior: "hide_launcher_and_restore_focus",
+      results: [
+        {
+          id: "1",
+          title: "deploy preview url",
+          subtitle: "https://example.com/preview",
+        },
+      ],
+    });
+
+    vi.mocked(launcherApi.searchLauncher).mockResolvedValue([
+      searchResult({
+        id: "clipboard",
+        title: "Clipboard History",
+        subtitle: "Browse and recopy your recent clipboard items",
+        starts_interactive_session: true,
+      }),
+    ]);
+    vi.mocked(launcherApi.executeLauncherCommand).mockResolvedValue({
+      kind: "started_session",
+      session,
+    });
+    vi.mocked(launcherApi.searchInteractiveSession).mockResolvedValue(session);
+    vi.mocked(launcherApi.submitLauncherInteractiveSelection).mockResolvedValue({
+      kind: "completed",
+      output: "copied clipboard item",
+      completion_behavior: "hide_launcher_and_restore_focus",
+    });
+
+    render(<App />);
+
+    const input = screen.getByLabelText("Command search");
+    fireEvent.change(input, { target: { value: "clipboard" } });
+
+    expect(await screen.findByText("Clipboard History")).toBeTruthy();
+    await userEvent.keyboard("{Enter}");
+    expect(await screen.findByText("deploy preview url")).toBeTruthy();
+
+    await userEvent.keyboard("{Enter}");
+
+    await waitFor(() => {
+      expect(launcherApi.submitLauncherInteractiveSelection).toHaveBeenCalledWith(
+        "session-1",
+        "",
+        "1",
+      );
+    });
+    await waitFor(() => {
+      expect(launcherApi.hideLauncherAndRestoreFocus).toHaveBeenCalled();
+    });
+    expect(launcherApi.hideLauncher).not.toHaveBeenCalled();
   });
 
   it("executes raw argv commands directly from one line", async () => {

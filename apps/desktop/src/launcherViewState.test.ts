@@ -42,6 +42,7 @@ const interactiveSession: InteractiveSessionState = {
   title: "Kill Process",
   subtitle: "Search by app, process, or port",
   input_placeholder: "Search process name or port 8080",
+  completion_behavior: "hide_launcher",
   query: "",
   is_loading: false,
   results: [],

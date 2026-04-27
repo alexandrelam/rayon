@@ -4,7 +4,8 @@ use rayon_core::{
 };
 use rayon_types::{
     CommandDefinition, CommandExecutionRequest, CommandExecutionResult, CommandId,
-    CommandInputMode, InteractiveSessionMetadata, InteractiveSessionResult,
+    CommandInputMode, InteractiveSessionCompletionBehavior, InteractiveSessionMetadata,
+    InteractiveSessionResult,
 };
 use std::sync::Arc;
 
@@ -60,6 +61,7 @@ impl CommandProvider for KillProvider {
             title: "Kill Process".into(),
             subtitle: Some("Search by app, process, or port".into()),
             input_placeholder: "Search process name or port 8080".into(),
+            completion_behavior: InteractiveSessionCompletionBehavior::HideLauncher,
         }))
     }
 

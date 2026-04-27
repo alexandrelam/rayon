@@ -41,6 +41,7 @@ export type InteractiveSessionState = {
   title: string;
   subtitle: string | null;
   input_placeholder: string;
+  completion_behavior: "hide_launcher" | "hide_launcher_and_restore_focus";
   query: string;
   is_loading: boolean;
   results: InteractiveSessionResult[];
@@ -53,7 +54,11 @@ export type CommandInvocationResult =
 
 export type InteractiveSessionSubmitResult =
   | { kind: "updated_session"; session: InteractiveSessionState }
-  | { kind: "completed"; output: string };
+  | {
+      kind: "completed";
+      output: string;
+      completion_behavior: "hide_launcher" | "hide_launcher_and_restore_focus";
+    };
 
 export type CommandArgumentValue =
   | { type: "string"; value: string }

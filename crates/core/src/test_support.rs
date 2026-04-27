@@ -8,8 +8,8 @@ use rayon_db::SearchIndexStats;
 use rayon_types::{
     BookmarkDefinition, BrowserTab, BrowserTabTarget, CommandArgumentDefinition,
     CommandArgumentType, CommandDefinition, CommandExecutionRequest, CommandExecutionResult,
-    CommandId, CommandInputMode, InstalledApp, InteractiveSessionMetadata,
-    InteractiveSessionResult, ProcessMatch, SearchableItemDocument,
+    CommandId, CommandInputMode, InstalledApp, InteractiveSessionCompletionBehavior,
+    InteractiveSessionMetadata, InteractiveSessionResult, ProcessMatch, SearchableItemDocument,
 };
 use std::sync::{Arc, Mutex};
 
@@ -72,6 +72,7 @@ impl CommandProvider for TestProvider {
             title: "Kill Process".into(),
             subtitle: Some("Terminate a running process".into()),
             input_placeholder: "Search by process name or port".into(),
+            completion_behavior: InteractiveSessionCompletionBehavior::HideLauncher,
         }))
     }
 
@@ -143,6 +144,7 @@ impl CommandProvider for CompletingProvider {
             title: "My Pull Requests".into(),
             subtitle: Some("Open a pull request".into()),
             input_placeholder: "Filter".into(),
+            completion_behavior: InteractiveSessionCompletionBehavior::HideLauncher,
         }))
     }
 
