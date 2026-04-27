@@ -1,20 +1,24 @@
+mod clipboard;
 mod github;
 mod kill;
 mod maintenance;
 mod theme;
 
+pub use clipboard::{ClipboardAccess, ClipboardHistoryProvider, ClipboardHistoryService};
 use github::GitHubMyPrsProvider;
 use rayon_core::{AppPlatform, CommandProvider};
 use std::sync::Arc;
 pub use theme::{ThemeCommandProvider, ThemeSettingsStore};
 
 pub struct BuiltInDependencies {
+    pub clipboard: Arc<ClipboardHistoryService>,
     pub platform: Arc<dyn AppPlatform>,
     pub theme_settings: Arc<ThemeSettingsStore>,
 }
 
 pub fn built_in_providers(deps: BuiltInDependencies) -> Vec<Arc<dyn CommandProvider>> {
     vec![
+        Arc::new(ClipboardHistoryProvider::new(deps.clipboard)),
         Arc::new(GitHubMyPrsProvider::new(deps.platform.clone())),
         Arc::new(kill::KillProvider::new(deps.platform)),
         Arc::new(maintenance::MaintenanceProvider),
@@ -73,9 +77,28 @@ mod tests {
 
     fn built_ins() -> Vec<Arc<dyn CommandProvider>> {
         built_in_providers(BuiltInDependencies {
+            clipboard: Arc::new(
+                ClipboardHistoryService::new(
+                    Arc::new(StubClipboardAccess),
+                    temp_theme_path("clipboard"),
+                )
+                .unwrap(),
+            ),
             platform: Arc::new(StubPlatform),
             theme_settings: Arc::new(ThemeSettingsStore::new(temp_theme_path("catalog"))),
         })
+    }
+
+    struct StubClipboardAccess;
+
+    impl ClipboardAccess for StubClipboardAccess {
+        fn read_text(&self) -> Result<Option<String>, String> {
+            Ok(None)
+        }
+
+        fn write_text(&self, _text: &str) -> Result<(), String> {
+            Ok(())
+        }
     }
 
     #[test]
@@ -115,5 +138,17 @@ mod tests {
             results["github.my-prs"].id,
             CommandId::from("github.my-prs")
         );
+    }
+
+    #[test]
+    fn built_in_catalog_registers_clipboard_command() {
+        let mut registry = CommandRegistry::new();
+        for provider in built_ins() {
+            registry.register_provider(provider).unwrap();
+        }
+
+        let results = registry.search_results_by_id();
+
+        assert_eq!(results["clipboard"].id, CommandId::from("clipboard"));
     }
 }

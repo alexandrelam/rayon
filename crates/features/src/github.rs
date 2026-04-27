@@ -1,7 +1,8 @@
 use rayon_core::{AppPlatform, CommandError, CommandProvider, InteractiveSessionSubmitOutcome};
 use rayon_types::{
     CommandDefinition, CommandExecutionRequest, CommandExecutionResult, CommandId,
-    CommandInputMode, InteractiveSessionMetadata, InteractiveSessionResult,
+    CommandInputMode, InteractiveSessionCompletionBehavior, InteractiveSessionMetadata,
+    InteractiveSessionResult,
 };
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -100,6 +101,7 @@ impl CommandProvider for GitHubMyPrsProvider {
             title: "My Pull Requests".into(),
             subtitle: Some("Open one of your authored pull requests".into()),
             input_placeholder: "Filter by title, repository, or number".into(),
+            completion_behavior: InteractiveSessionCompletionBehavior::HideLauncher,
         }))
     }
 
@@ -447,6 +449,7 @@ mod tests {
             title: "My Pull Requests".into(),
             subtitle: Some("Open one of your authored pull requests".into()),
             input_placeholder: "Filter by title, repository, or number".into(),
+            completion_behavior: InteractiveSessionCompletionBehavior::HideLauncher,
         };
 
         let result = provider
@@ -483,6 +486,7 @@ mod tests {
             title: "My Pull Requests".into(),
             subtitle: Some("Open one of your authored pull requests".into()),
             input_placeholder: "Filter by title, repository, or number".into(),
+            completion_behavior: InteractiveSessionCompletionBehavior::HideLauncher,
         };
 
         let error = provider

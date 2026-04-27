@@ -158,6 +158,8 @@ pub struct InteractiveSessionMetadata {
     #[serde(default)]
     pub subtitle: Option<String>,
     pub input_placeholder: String,
+    #[serde(default)]
+    pub completion_behavior: InteractiveSessionCompletionBehavior,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -176,6 +178,8 @@ pub struct InteractiveSessionState {
     #[serde(default)]
     pub subtitle: Option<String>,
     pub input_placeholder: String,
+    #[serde(default)]
+    pub completion_behavior: InteractiveSessionCompletionBehavior,
     pub query: String,
     #[serde(default)]
     pub is_loading: bool,
@@ -205,11 +209,24 @@ pub enum CommandInvocationResult {
     StartedSession { session: InteractiveSessionState },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum InteractiveSessionCompletionBehavior {
+    #[default]
+    HideLauncher,
+    HideLauncherAndRestoreFocus,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum InteractiveSessionSubmitResult {
-    UpdatedSession { session: InteractiveSessionState },
-    Completed { output: String },
+    UpdatedSession {
+        session: InteractiveSessionState,
+    },
+    Completed {
+        output: String,
+        completion_behavior: InteractiveSessionCompletionBehavior,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]

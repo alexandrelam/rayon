@@ -309,6 +309,7 @@ export function useLauncherController(): LauncherController {
       title: result.title,
       subtitle: result.subtitle,
       input_placeholder: "Type to filter",
+      completion_behavior: "hide_launcher",
       query: "",
       is_loading: true,
       results: [],
@@ -397,7 +398,11 @@ export function useLauncherController(): LauncherController {
         void refreshThemePreference();
 
         try {
-          await hideLauncher();
+          if (response.completion_behavior === "hide_launcher_and_restore_focus") {
+            await hideLauncherAndRestoreFocus();
+          } else {
+            await hideLauncher();
+          }
           resetLauncher();
         } catch (hideError) {
           setError(hideError instanceof Error ? hideError.message : String(hideError));

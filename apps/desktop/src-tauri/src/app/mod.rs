@@ -1,3 +1,4 @@
+mod clipboard;
 mod launcher;
 mod paths;
 mod state;

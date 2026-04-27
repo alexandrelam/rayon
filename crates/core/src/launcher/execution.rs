@@ -52,6 +52,7 @@ impl LauncherService {
                 title: session_owner.metadata.title,
                 subtitle: session_owner.metadata.subtitle,
                 input_placeholder: session_owner.metadata.input_placeholder,
+                completion_behavior: session_owner.metadata.completion_behavior,
             };
 
             write_interactive_sessions(&self.interactive_sessions).insert(
@@ -69,6 +70,7 @@ impl LauncherService {
                     title: metadata.title,
                     subtitle: metadata.subtitle,
                     input_placeholder: metadata.input_placeholder,
+                    completion_behavior: metadata.completion_behavior,
                     query: String::new(),
                     is_loading: true,
                     results: Vec::new(),

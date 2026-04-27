@@ -13,3 +13,10 @@ pub fn app_theme_settings_path(app: &AppHandle) -> Result<std::path::PathBuf, St
         .map(|path| path.join("settings").join("theme.json"))
         .map_err(|error| error.to_string())
 }
+
+pub fn app_clipboard_history_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    app.path()
+        .app_local_data_dir()
+        .map(|path| path.join("settings").join("clipboard-history.json"))
+        .map_err(|error| error.to_string())
+}

@@ -2,7 +2,9 @@ use super::state::write_launcher;
 use rayon_core::{
     load_config, AppPlatform, CommandRegistry, LauncherService, SearchIndex, APP_REINDEX_COMMAND_ID,
 };
-use rayon_features::{built_in_providers, BuiltInDependencies, ThemeSettingsStore};
+use rayon_features::{
+    built_in_providers, BuiltInDependencies, ClipboardHistoryService, ThemeSettingsStore,
+};
 use rayon_types::{
     BookmarkDefinition, CommandExecutionRequest, CommandExecutionResult, CommandInvocationResult,
 };
@@ -11,9 +13,11 @@ use std::sync::{Arc, RwLock};
 pub fn build_launcher(
     platform: Arc<dyn AppPlatform>,
     search_index: Arc<dyn SearchIndex>,
+    clipboard: Arc<ClipboardHistoryService>,
     theme_settings: Arc<ThemeSettingsStore>,
 ) -> Result<LauncherService, String> {
-    let (registry, bookmarks) = load_registry_and_bookmarks(platform.clone(), theme_settings)?;
+    let (registry, bookmarks) =
+        load_registry_and_bookmarks(platform.clone(), clipboard, theme_settings)?;
     Ok(LauncherService::new(
         registry,
         bookmarks,
@@ -26,9 +30,10 @@ pub fn reload_launcher(
     launcher_slot: &RwLock<LauncherService>,
     platform: Arc<dyn AppPlatform>,
     search_index: Arc<dyn SearchIndex>,
+    clipboard: Arc<ClipboardHistoryService>,
     theme_settings: Arc<ThemeSettingsStore>,
 ) -> Result<CommandExecutionResult, String> {
-    let launcher = build_launcher(platform, search_index, theme_settings)?;
+    let launcher = build_launcher(platform, search_index, clipboard, theme_settings)?;
     let result = launcher
         .execute_command(&CommandExecutionRequest {
             command_id: APP_REINDEX_COMMAND_ID.into(),
@@ -45,12 +50,14 @@ pub fn reload_launcher(
 
 fn load_registry_and_bookmarks(
     platform: Arc<dyn AppPlatform>,
+    clipboard: Arc<ClipboardHistoryService>,
     theme_settings: Arc<ThemeSettingsStore>,
 ) -> Result<(CommandRegistry, Vec<BookmarkDefinition>), String> {
     let mut registry = CommandRegistry::new();
     let loaded_config = load_config().map_err(|error| error.to_string())?;
 
     for provider in built_in_providers(BuiltInDependencies {
+        clipboard,
         platform,
         theme_settings,
     }) {
@@ -91,6 +98,7 @@ fn validate_bookmark_ids(
 mod tests {
     use super::*;
     use rayon_db::SearchIndexStats;
+    use rayon_features::ClipboardAccess;
     use rayon_types::{
         BrowserTab, BrowserTabTarget, CommandId, InstalledApp, ProcessMatch,
         SearchableItemDocument, ThemePreference,
@@ -106,6 +114,18 @@ mod tests {
     }
 
     struct StubPlatform;
+
+    struct StubClipboardAccess;
+
+    impl ClipboardAccess for StubClipboardAccess {
+        fn read_text(&self) -> Result<Option<String>, String> {
+            Ok(None)
+        }
+
+        fn write_text(&self, _text: &str) -> Result<(), String> {
+            Ok(())
+        }
+    }
 
     impl AppPlatform for StubPlatform {
         fn discover_apps(&self) -> Result<Vec<InstalledApp>, String> {
@@ -210,10 +230,18 @@ program = "/bin/echo"
 
         let search_index = Arc::new(StubSearchIndex::default());
         let platform: Arc<dyn AppPlatform> = Arc::new(StubPlatform);
+        let clipboard = Arc::new(
+            ClipboardHistoryService::new(
+                Arc::new(StubClipboardAccess),
+                config_home.join("clipboard-history.json"),
+            )
+            .unwrap(),
+        );
         let theme_settings = Arc::new(ThemeSettingsStore::new(config_home.join("theme.json")));
         let launcher = build_launcher(
             platform.clone(),
             search_index.clone(),
+            clipboard.clone(),
             theme_settings.clone(),
         )
         .unwrap();
@@ -254,8 +282,14 @@ keywords = ["jira", "board"]
             ],
         );
 
-        let result =
-            reload_launcher(&launcher_slot, platform, search_index, theme_settings).unwrap();
+        let result = reload_launcher(
+            &launcher_slot,
+            platform,
+            search_index,
+            clipboard,
+            theme_settings,
+        )
+        .unwrap();
         assert!(result.output.starts_with("reindexed "));
 
         let launcher = launcher_slot.read().unwrap();
@@ -296,10 +330,18 @@ keywords = ["docs"]
 
         let search_index = Arc::new(StubSearchIndex::default());
         let platform: Arc<dyn AppPlatform> = Arc::new(StubPlatform);
+        let clipboard = Arc::new(
+            ClipboardHistoryService::new(
+                Arc::new(StubClipboardAccess),
+                config_home.join("clipboard-history.json"),
+            )
+            .unwrap(),
+        );
         let theme_settings = Arc::new(ThemeSettingsStore::new(config_home.join("theme.json")));
         let launcher = build_launcher(
             platform.clone(),
             search_index.clone(),
+            clipboard.clone(),
             theme_settings.clone(),
         )
         .unwrap();
@@ -320,8 +362,14 @@ url = "not-a-url"
             )],
         );
 
-        let error =
-            reload_launcher(&launcher_slot, platform, search_index, theme_settings).unwrap_err();
+        let error = reload_launcher(
+            &launcher_slot,
+            platform,
+            search_index,
+            clipboard,
+            theme_settings,
+        )
+        .unwrap_err();
         assert!(error.contains("invalid bookmark url"));
 
         let launcher = launcher_slot.read().unwrap();
@@ -338,11 +386,18 @@ url = "not-a-url"
     fn build_launcher_registers_theme_command() {
         let search_index = Arc::new(StubSearchIndex::default());
         let platform: Arc<dyn AppPlatform> = Arc::new(StubPlatform);
+        let clipboard = Arc::new(
+            ClipboardHistoryService::new(
+                Arc::new(StubClipboardAccess),
+                std::env::temp_dir().join("rayon-theme-command-clipboard.json"),
+            )
+            .unwrap(),
+        );
         let theme_settings = Arc::new(ThemeSettingsStore::new(
             std::env::temp_dir().join("rayon-theme-command.json"),
         ));
 
-        let launcher = build_launcher(platform, search_index, theme_settings).unwrap();
+        let launcher = build_launcher(platform, search_index, clipboard, theme_settings).unwrap();
         let results = launcher.search("theme");
 
         assert!(results

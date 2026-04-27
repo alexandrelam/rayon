@@ -3,7 +3,8 @@ use rayon_core::{
 };
 use rayon_types::{
     CommandDefinition, CommandExecutionRequest, CommandExecutionResult, CommandId,
-    CommandInputMode, InteractiveSessionMetadata, InteractiveSessionResult, ThemePreference,
+    CommandInputMode, InteractiveSessionCompletionBehavior, InteractiveSessionMetadata,
+    InteractiveSessionResult, ThemePreference,
 };
 use std::sync::Arc;
 
@@ -60,6 +61,7 @@ impl CommandProvider for ThemeCommandProvider {
             title: "Set Theme".into(),
             subtitle: Some("Choose the launcher appearance".into()),
             input_placeholder: "Filter light, dark, or system".into(),
+            completion_behavior: InteractiveSessionCompletionBehavior::HideLauncher,
         }))
     }
 
