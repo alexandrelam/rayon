@@ -1,3 +1,4 @@
+mod adapters;
 mod clipboard;
 mod launcher;
 mod paths;

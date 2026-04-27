@@ -3,10 +3,12 @@ use crate::commands::{CommandRegistry, APP_REINDEX_COMMAND_ID};
 use crate::test_support::{
     build_launcher_service, CompletingProvider, StubPlatform, StubSearchIndex, TestProvider,
 };
-use rayon_db::SearchIndexStats;
+use crate::SearchIndexStats;
+use crate::{CommandError, CommandProvider, InteractiveSessionSubmitOutcome};
 use rayon_types::{
-    BookmarkDefinition, BrowserTab, BrowserTabTarget, CommandExecutionRequest, CommandId,
-    CommandInvocationResult, InteractiveSessionCompletionBehavior, InteractiveSessionQueryRequest,
+    BookmarkDefinition, BrowserTab, BrowserTabTarget, CommandDefinition, CommandExecutionRequest,
+    CommandId, CommandInputMode, CommandInvocationResult, InteractiveSessionCompletionBehavior,
+    InteractiveSessionMetadata, InteractiveSessionQueryRequest, InteractiveSessionResult,
     InteractiveSessionSubmitRequest, InteractiveSessionSubmitResult, SearchResultKind,
 };
 use std::collections::HashMap;
@@ -94,41 +96,6 @@ fn aggregate_search_does_not_include_browser_tabs() {
 
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].kind, SearchResultKind::Command);
-}
-
-#[allow(clippy::unwrap_used)]
-#[test]
-fn search_browser_tabs_returns_matching_browser_tabs() {
-    let platform = Arc::new(StubPlatform {
-        apps: vec![rayon_types::InstalledApp {
-            id: CommandId::from("app:macos:com.example.arc"),
-            title: "Arc".into(),
-            bundle_identifier: Some("com.example.arc".into()),
-            path: "/Applications/Arc.app".into(),
-        }],
-        launched: Mutex::new(Vec::new()),
-        opened_urls: Mutex::new(Vec::new()),
-        browser_tabs: Mutex::new(vec![BrowserTab {
-            browser: "chrome".into(),
-            window_id: "window-1".into(),
-            window_index: 1,
-            active_tab_index: 2,
-            tab_index: 2,
-            title: "Arc Docs".into(),
-            url: "https://example.com/arc".into(),
-        }]),
-        focused_browser_tabs: Mutex::new(Vec::new()),
-        process_search_results: Mutex::new(Vec::new()),
-        terminated_pids: Mutex::new(Vec::new()),
-    });
-    let launcher = launcher_with_platform(platform, vec![String::from("echo")]);
-
-    let results = launcher.search_browser_tabs("arc");
-
-    assert_eq!(results.len(), 1);
-    assert_eq!(results[0].kind, SearchResultKind::BrowserTab);
-    assert_eq!(results[0].title, "Arc Docs");
-    assert!(results[0].close_launcher_on_success);
 }
 
 #[allow(clippy::unwrap_used)]
@@ -384,6 +351,137 @@ fn completed_interactive_submit_removes_active_session() {
         })
         .unwrap_err();
     assert_eq!(error.to_string(), "unknown interactive session: session-1");
+}
+
+#[allow(clippy::unwrap_used)]
+#[test]
+fn completed_interactive_submit_calls_provider_cleanup() {
+    struct CleanupTrackingProvider {
+        ended_sessions: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl CommandProvider for CleanupTrackingProvider {
+        fn commands(&self) -> Vec<CommandDefinition> {
+            vec![CommandDefinition {
+                id: CommandId::from("cleanup.test"),
+                title: "Cleanup Test".into(),
+                subtitle: None,
+                owner_plugin_id: "builtin.test".into(),
+                keywords: Vec::new(),
+                close_launcher_on_success: false,
+                input_mode: CommandInputMode::Structured,
+                arguments: Vec::new(),
+            }]
+        }
+
+        fn execute(
+            &self,
+            request: &CommandExecutionRequest,
+        ) -> Result<rayon_types::CommandExecutionResult, CommandError> {
+            Err(CommandError::UnknownCommand(request.command_id.clone()))
+        }
+
+        fn start_interactive_session(
+            &self,
+            command_id: &CommandId,
+        ) -> Result<Option<InteractiveSessionMetadata>, CommandError> {
+            if command_id.as_str() != "cleanup.test" {
+                return Ok(None);
+            }
+
+            Ok(Some(InteractiveSessionMetadata {
+                session_id: String::new(),
+                command_id: command_id.clone(),
+                title: "Cleanup Test".into(),
+                subtitle: None,
+                input_placeholder: "Filter".into(),
+                completion_behavior: InteractiveSessionCompletionBehavior::HideLauncher,
+            }))
+        }
+
+        fn search_interactive_session(
+            &self,
+            _session: &InteractiveSessionMetadata,
+            _query: &str,
+        ) -> Result<Vec<InteractiveSessionResult>, CommandError> {
+            Ok(vec![InteractiveSessionResult {
+                id: "done".into(),
+                title: "Done".into(),
+                subtitle: None,
+            }])
+        }
+
+        fn submit_interactive_session(
+            &self,
+            _session: &InteractiveSessionMetadata,
+            _query: &str,
+            _item_id: &str,
+        ) -> Result<InteractiveSessionSubmitOutcome, CommandError> {
+            Ok(InteractiveSessionSubmitOutcome::Completed(
+                rayon_types::CommandExecutionResult {
+                    output: "done".into(),
+                },
+            ))
+        }
+
+        fn end_interactive_session(&self, session: &InteractiveSessionMetadata) {
+            self.ended_sessions
+                .lock()
+                .unwrap()
+                .push(session.session_id.clone());
+        }
+    }
+
+    let ended_sessions = Arc::new(Mutex::new(Vec::new()));
+    let mut registry = CommandRegistry::new();
+    registry
+        .register_provider(Arc::new(CleanupTrackingProvider {
+            ended_sessions: ended_sessions.clone(),
+        }))
+        .unwrap();
+
+    let platform = Arc::new(StubPlatform {
+        apps: Vec::new(),
+        launched: Mutex::new(Vec::new()),
+        opened_urls: Mutex::new(Vec::new()),
+        browser_tabs: Mutex::new(Vec::new()),
+        focused_browser_tabs: Mutex::new(Vec::new()),
+        process_search_results: Mutex::new(Vec::new()),
+        terminated_pids: Mutex::new(Vec::new()),
+    });
+    let index = Arc::new(StubSearchIndex {
+        configured: true,
+        search_results: Vec::new(),
+        stats: SearchIndexStats {
+            discovered_count: 0,
+            indexed_count: 0,
+            skipped_count: 0,
+        },
+        last_documents: Mutex::new(Vec::new()),
+    });
+    let launcher = LauncherService::new(registry, Vec::new(), platform, index);
+
+    let session = match launcher
+        .execute_command(&CommandExecutionRequest {
+            command_id: CommandId::from("cleanup.test"),
+            argv: Vec::new(),
+            arguments: HashMap::new(),
+        })
+        .unwrap()
+    {
+        CommandInvocationResult::StartedSession { session } => session,
+        CommandInvocationResult::Completed { .. } => unreachable!(),
+    };
+
+    let _ = launcher
+        .submit_interactive_session(&InteractiveSessionSubmitRequest {
+            session_id: session.session_id.clone(),
+            query: String::new(),
+            item_id: "done".into(),
+        })
+        .unwrap();
+
+    assert_eq!(&*ended_sessions.lock().unwrap(), &[session.session_id]);
 }
 
 #[allow(clippy::unwrap_used)]

@@ -139,7 +139,7 @@ Contributions are welcome.
 
 - Open an issue if you find a bug, want to propose a workflow improvement, or want to discuss a feature direction.
 - Open a pull request if you want to improve the launcher, configuration system, or platform integration.
-- Read [docs/project-structure.md](docs/project-structure.md) if you want a quick map of the workspace before making deeper changes.
+- Read [docs/adding-a-feature.md](docs/adding-a-feature.md) if you want a short guide for where new features should live.
 
 ## License
 

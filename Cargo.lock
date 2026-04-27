@@ -3198,8 +3198,6 @@ dependencies = [
 name = "rayon-core"
 version = "0.4.0"
 dependencies = [
- "rayon-db",
- "rayon-platform",
  "rayon-types",
  "serde",
  "toml 0.8.2",

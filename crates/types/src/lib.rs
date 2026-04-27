@@ -367,6 +367,13 @@ pub struct SearchableItemDocument {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SearchIndexStats {
+    pub discovered_count: usize,
+    pub indexed_count: usize,
+    pub skipped_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProcessMatch {
     pub pid: u32,
     pub display_name: String,

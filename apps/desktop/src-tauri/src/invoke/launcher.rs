@@ -1,5 +1,4 @@
 use crate::{app::AppState, shell, MAIN_WINDOW_LABEL};
-use rayon_core::APP_REINDEX_COMMAND_ID;
 use rayon_types::{
     CommandExecutionRequest, CommandInvocationResult, InteractiveSessionQueryRequest,
     InteractiveSessionState, InteractiveSessionSubmitRequest, InteractiveSessionSubmitResult,
@@ -37,15 +36,6 @@ pub async fn execute_command(
     state: tauri::State<'_, Arc<AppState>>,
 ) -> Result<CommandInvocationResult, String> {
     let state = Arc::clone(state.inner());
-
-    if request.command_id.as_str() == APP_REINDEX_COMMAND_ID {
-        return tauri::async_runtime::spawn_blocking(move || state.reload())
-            .await
-            .map_err(|error| format!("launcher task failed: {error}"))?
-            .map(|result| CommandInvocationResult::Completed {
-                output: result.output,
-            });
-    }
 
     tauri::async_runtime::spawn_blocking(move || state.execute_command(&request))
         .await

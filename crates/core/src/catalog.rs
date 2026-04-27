@@ -1,8 +1,6 @@
-use rayon_db::{SearchIndexStats, TantivySearchIndex};
-use rayon_platform::MacOsAppManager;
 use rayon_types::{
     BookmarkDefinition, BrowserTab, BrowserTabTarget, CommandId, CommandInputMode, InstalledApp,
-    ProcessMatch, SearchResult, SearchResultKind, SearchableItemDocument,
+    ProcessMatch, SearchIndexStats, SearchResult, SearchResultKind, SearchableItemDocument,
 };
 use std::collections::HashMap;
 
@@ -20,50 +18,6 @@ pub trait SearchIndex: Send + Sync {
     fn is_configured(&self) -> bool;
     fn search_item_ids(&self, query: &str, limit: usize) -> Result<Vec<String>, String>;
     fn replace_items(&self, items: &[SearchableItemDocument]) -> Result<SearchIndexStats, String>;
-}
-
-impl AppPlatform for MacOsAppManager {
-    fn discover_apps(&self) -> Result<Vec<InstalledApp>, String> {
-        MacOsAppManager::discover_apps(self)
-    }
-
-    fn launch_app(&self, app: &InstalledApp) -> Result<(), String> {
-        MacOsAppManager::launch_app(self, app)
-    }
-
-    fn open_url(&self, url: &str) -> Result<(), String> {
-        MacOsAppManager::open_url(self, url)
-    }
-
-    fn search_browser_tabs(&self, query: &str) -> Result<Vec<BrowserTab>, String> {
-        MacOsAppManager::search_browser_tabs(self, query)
-    }
-
-    fn focus_browser_tab(&self, target: &BrowserTabTarget) -> Result<(), String> {
-        MacOsAppManager::focus_browser_tab(self, target)
-    }
-
-    fn search_processes(&self, query: &str) -> Result<Vec<ProcessMatch>, String> {
-        MacOsAppManager::search_processes(self, query)
-    }
-
-    fn terminate_process(&self, pid: u32) -> Result<(), String> {
-        MacOsAppManager::terminate_process(self, pid)
-    }
-}
-
-impl SearchIndex for TantivySearchIndex {
-    fn is_configured(&self) -> bool {
-        TantivySearchIndex::is_configured(self)
-    }
-
-    fn search_item_ids(&self, query: &str, limit: usize) -> Result<Vec<String>, String> {
-        TantivySearchIndex::search_item_ids(self, query, limit).map_err(|error| error.to_string())
-    }
-
-    fn replace_items(&self, items: &[SearchableItemDocument]) -> Result<SearchIndexStats, String> {
-        TantivySearchIndex::replace_items(self, items).map_err(|error| error.to_string())
-    }
 }
 
 #[derive(Default)]

@@ -66,6 +66,8 @@ impl LauncherService {
             }
             InteractiveSessionSubmitOutcome::Completed(result) => {
                 write_interactive_sessions(&self.interactive_sessions).remove(&request.session_id);
+                self.registry
+                    .end_interactive_session(session.provider_index, &session.metadata);
                 Ok(InteractiveSessionSubmitResult::Completed {
                     output: result.output,
                     completion_behavior: session.metadata.completion_behavior,

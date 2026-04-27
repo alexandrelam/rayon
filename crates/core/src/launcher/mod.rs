@@ -1,5 +1,6 @@
 mod error;
 mod execution;
+mod routing;
 mod search;
 mod service;
 mod sessions;
