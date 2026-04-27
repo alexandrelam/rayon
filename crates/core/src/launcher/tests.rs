@@ -65,7 +65,7 @@ fn aggregate_search_uses_shared_index_ids() {
 
 #[allow(clippy::unwrap_used)]
 #[test]
-fn search_prioritizes_matching_browser_tabs() {
+fn aggregate_search_does_not_include_browser_tabs() {
     let platform = Arc::new(StubPlatform {
         apps: vec![rayon_types::InstalledApp {
             id: CommandId::from("app:macos:com.example.arc"),
@@ -92,6 +92,40 @@ fn search_prioritizes_matching_browser_tabs() {
 
     let results = launcher.search("arc");
 
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].kind, SearchResultKind::Command);
+}
+
+#[allow(clippy::unwrap_used)]
+#[test]
+fn search_browser_tabs_returns_matching_browser_tabs() {
+    let platform = Arc::new(StubPlatform {
+        apps: vec![rayon_types::InstalledApp {
+            id: CommandId::from("app:macos:com.example.arc"),
+            title: "Arc".into(),
+            bundle_identifier: Some("com.example.arc".into()),
+            path: "/Applications/Arc.app".into(),
+        }],
+        launched: Mutex::new(Vec::new()),
+        opened_urls: Mutex::new(Vec::new()),
+        browser_tabs: Mutex::new(vec![BrowserTab {
+            browser: "chrome".into(),
+            window_id: "window-1".into(),
+            window_index: 1,
+            active_tab_index: 2,
+            tab_index: 2,
+            title: "Arc Docs".into(),
+            url: "https://example.com/arc".into(),
+        }]),
+        focused_browser_tabs: Mutex::new(Vec::new()),
+        process_search_results: Mutex::new(Vec::new()),
+        terminated_pids: Mutex::new(Vec::new()),
+    });
+    let launcher = launcher_with_platform(platform, vec![String::from("echo")]);
+
+    let results = launcher.search_browser_tabs("arc");
+
+    assert_eq!(results.len(), 1);
     assert_eq!(results[0].kind, SearchResultKind::BrowserTab);
     assert_eq!(results[0].title, "Arc Docs");
     assert!(results[0].close_launcher_on_success);

@@ -24,6 +24,7 @@ import {
   hideLauncherAndRestoreFocus,
   refreshThemePreference,
   registerLauncherOpenedListener,
+  searchBrowserTabs,
   searchInteractiveSession,
   searchLauncher,
   submitLauncherInteractiveSelection,
@@ -42,6 +43,7 @@ import type {
   LauncherController,
   LauncherFooterViewModel,
   LauncherHeaderViewModel,
+  LauncherInputMode,
   LauncherResultItemViewModel,
 } from "./types";
 
@@ -134,11 +136,18 @@ export function useLauncherController(): LauncherController {
       return;
     }
 
+    const searchMode = getLauncherInputMode(query);
     let cancelled = false;
 
     async function runSearch() {
       try {
-        const nextResults = await resolveLauncherSearch(query);
+        const nextResults =
+          searchMode === "browser_tabs"
+            ? {
+                results: await searchBrowserTabs(normalizeBrowserTabQuery(query)),
+                inlineFallbackArgv: [],
+              }
+            : await resolveLauncherSearch(query);
         if (cancelled) {
           return;
         }
@@ -571,6 +580,8 @@ export function useLauncherController(): LauncherController {
   };
 
   const activeArgument = currentArgument(pendingExecution);
+  const inputMode: LauncherInputMode =
+    pendingExecution || interactiveSession ? "default" : getLauncherInputMode(query);
   const viewState = getLauncherViewState({
     query,
     results,
@@ -693,7 +704,10 @@ export function useLauncherController(): LauncherController {
         : activeArgument.label
       : interactiveSession
         ? interactiveSession.input_placeholder
+        : inputMode === "browser_tabs"
+          ? "Search open Chrome tabs"
         : "Type a command",
+    inputMode,
     onQueryChange,
     onKeyDown,
     header,
@@ -726,6 +740,14 @@ export function useLauncherController(): LauncherController {
     },
     pendingExecution,
   };
+}
+
+function getLauncherInputMode(query: string): LauncherInputMode {
+  return query.startsWith(" ") ? "browser_tabs" : "default";
+}
+
+function normalizeBrowserTabQuery(query: string): string {
+  return query.slice(1).trim();
 }
 
 async function resolveLauncherSearch(query: string): Promise<{

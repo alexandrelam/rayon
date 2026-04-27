@@ -52,6 +52,10 @@ impl AppState {
         self.read_launcher().search(query)
     }
 
+    pub fn search_browser_tabs(&self, query: &str) -> Vec<SearchResult> {
+        self.read_launcher().search_browser_tabs(query)
+    }
+
     pub fn execute_command(
         &self,
         request: &CommandExecutionRequest,

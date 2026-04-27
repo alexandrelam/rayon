@@ -7,7 +7,6 @@ const SEARCH_LIMIT: usize = 20;
 
 impl LauncherService {
     pub fn search(&self, query: &str) -> Vec<SearchResult> {
-        let mut results = self.browser_tab_results(query);
         let item_ids = match self.search_index.search_item_ids(query, SEARCH_LIMIT) {
             Ok(item_ids) => item_ids,
             Err(error) => {
@@ -21,17 +20,18 @@ impl LauncherService {
         search_results.extend(app_results);
         search_results.extend(self.bookmark_catalog.search_results_by_id());
 
+        let mut results = Vec::new();
         for item_id in item_ids {
-            if results.len() >= SEARCH_LIMIT {
-                break;
-            }
-
             if let Some(result) = search_results.get(&item_id).cloned() {
                 results.push(result);
             }
         }
 
         results
+    }
+
+    pub fn search_browser_tabs(&self, query: &str) -> Vec<SearchResult> {
+        self.browser_tab_results(query)
     }
 
     pub fn search_enabled(&self) -> bool {

@@ -70,10 +70,6 @@ impl MacOsAppManager {
 
     pub fn search_browser_tabs(&self, query: &str) -> Result<Vec<BrowserTab>, String> {
         let trimmed_query = query.trim();
-        if trimmed_query.is_empty() {
-            return Ok(Vec::new());
-        }
-
         let output = Command::new("/usr/bin/osascript")
             .arg("-e")
             .arg(chrome_tabs_list_script())
@@ -371,6 +367,18 @@ fn parse_chrome_tab_row(row: &str) -> Result<BrowserTab, String> {
 
 fn filter_browser_tabs(tabs: &[BrowserTab], query: &str) -> Vec<BrowserTab> {
     let normalized_query = query.trim().to_lowercase();
+    if normalized_query.is_empty() {
+        let mut all_tabs = tabs.to_vec();
+        all_tabs.sort_by(|left, right| {
+            right
+                .is_active()
+                .cmp(&left.is_active())
+                .then_with(|| left.window_index.cmp(&right.window_index))
+                .then_with(|| left.tab_index.cmp(&right.tab_index))
+        });
+        return all_tabs;
+    }
+
     let mut matches = tabs
         .iter()
         .filter_map(|tab| {
@@ -761,5 +769,35 @@ mod tests {
         assert_eq!(matches.len(), 2);
         assert_eq!(matches[0].matched_ports, vec![8080]);
         assert_eq!(matches[1].matched_ports, vec![8080]);
+    }
+
+    #[test]
+    fn empty_browser_tab_query_returns_all_tabs_with_active_first() {
+        let tabs = vec![
+            BrowserTab {
+                browser: "chrome".into(),
+                window_id: "window-1".into(),
+                window_index: 1,
+                active_tab_index: 2,
+                tab_index: 1,
+                title: "First".into(),
+                url: "https://example.com/1".into(),
+            },
+            BrowserTab {
+                browser: "chrome".into(),
+                window_id: "window-1".into(),
+                window_index: 1,
+                active_tab_index: 2,
+                tab_index: 2,
+                title: "Second".into(),
+                url: "https://example.com/2".into(),
+            },
+        ];
+
+        let matches = filter_browser_tabs(&tabs, "");
+
+        assert_eq!(matches.len(), 2);
+        assert_eq!(matches[0].title, "Second");
+        assert_eq!(matches[1].title, "First");
     }
 }
