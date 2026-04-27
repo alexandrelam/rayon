@@ -112,11 +112,14 @@ Example custom command manifest:
 plugin_id = "user.commands"
 
 [[commands]]
-id = "user.echo"
-title = "Echo"
-program = "/bin/echo"
+id = "user.git-status"
+title = "git-status"
+program = "/usr/bin/git"
 base_args = ["status"]
+keywords = ["gs"]
 ```
+
+Typing `git-status ~/work/repo` runs the command in one line and passes `~/work/repo` as a trailing argv argument.
 
 For the full manifest format and troubleshooting details:
 

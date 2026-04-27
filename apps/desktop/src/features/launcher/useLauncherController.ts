@@ -7,11 +7,11 @@ import {
   currentArgument,
   currentArgumentInputValue,
   type InteractiveSessionState,
+  matchesExactKeywordAlias,
   parseCommandLine,
   type PendingExecution,
   resolveInlineArgv,
   resolvePendingExecutionStep,
-  resolveStructuredDirectExecution,
   scheduleAfterNextPaint,
   type SearchResult,
 } from "@/commandExecution";
@@ -278,12 +278,6 @@ export function useLauncherController(): LauncherController {
   }
 
   async function executeResult(result: SearchResult) {
-    const structuredDirectExecution = resolveStructuredDirectExecution(result, query);
-    if (structuredDirectExecution.canExecute) {
-      await executeCommand(result.id, {});
-      return;
-    }
-
     const nextPendingExecution = beginPendingExecution(result);
     if (nextPendingExecution) {
       setPendingExecution(nextPendingExecution);
@@ -296,9 +290,9 @@ export function useLauncherController(): LauncherController {
     }
 
     const inlineExecution = resolveInlineArgv(result, query, inlineFallbackArgv);
-    if (inlineExecution.error) {
+    if (inlineExecution.kind === "error") {
       setExecutionResult("");
-      setError(inlineExecution.error);
+      setError(inlineExecution.message);
       return;
     }
 
@@ -710,13 +704,6 @@ async function resolveLauncherSearch(query: string): Promise<{
   inlineFallbackArgv: string[];
 }> {
   const directResults = await searchLauncher(query);
-  if (directResults.length > 0) {
-    return {
-      results: directResults,
-      inlineFallbackArgv: [],
-    };
-  }
-
   const parsed = parseCommandLine(query);
   if (parsed.kind === "error" || parsed.tokens.length < 2) {
     return {
@@ -726,9 +713,25 @@ async function resolveLauncherSearch(query: string): Promise<{
   }
 
   for (let prefixLength = parsed.tokens.length - 1; prefixLength > 0; prefixLength -= 1) {
+    const prefixTokens = parsed.tokens.slice(0, prefixLength);
+    const hasDirectAliasMatch = directResults.some((result) => {
+      return matchesExactKeywordAlias(result, prefixTokens);
+    });
+    if (hasDirectAliasMatch) {
+      return {
+        results: directResults,
+        inlineFallbackArgv: parsed.tokens.slice(prefixLength),
+      };
+    }
+  }
+
+  for (let prefixLength = parsed.tokens.length - 1; prefixLength > 0; prefixLength -= 1) {
     const prefixQuery = parsed.tokens.slice(0, prefixLength).join(" ");
     const prefixResults = await searchLauncher(prefixQuery);
-    if (prefixResults.length > 0) {
+    const hasExactAliasMatch = prefixResults.some((result) => {
+      return matchesExactKeywordAlias(result, parsed.tokens.slice(0, prefixLength));
+    });
+    if (hasExactAliasMatch) {
       return {
         results: prefixResults,
         inlineFallbackArgv: parsed.tokens.slice(prefixLength),

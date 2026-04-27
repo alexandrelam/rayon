@@ -221,72 +221,6 @@ describe("App", () => {
     });
   });
 
-  it("executes structured commands directly for exact keyword aliases when args are already satisfiable", async () => {
-    vi.mocked(launcherApi.searchLauncher).mockResolvedValue([
-      searchResult({
-        id: "user.teleport",
-        title: "Teleport",
-        keywords: ["tp"],
-        arguments: [
-          {
-            id: "profile",
-            label: "Profile",
-            argument_type: "string",
-            required: true,
-            flag: "--profile",
-            positional: null,
-            default_value: { type: "string", value: "default" },
-          },
-        ],
-      }),
-    ]);
-
-    render(<App />);
-
-    const input = screen.getByLabelText("Command search");
-    fireEvent.change(input, { target: { value: "tp" } });
-
-    expect(await screen.findByText("Teleport")).toBeTruthy();
-    await userEvent.keyboard("{Enter}");
-
-    await waitFor(() => {
-      expect(launcherApi.executeLauncherCommand).toHaveBeenCalledWith("user.teleport", {}, []);
-    });
-    expect(screen.queryByText("Step 1 of 1")).toBeNull();
-  });
-
-  it("keeps the structured prompt for exact aliases when required args still need input", async () => {
-    vi.mocked(launcherApi.searchLauncher).mockResolvedValue([
-      searchResult({
-        id: "user.teleport",
-        title: "Teleport",
-        keywords: ["tp"],
-        arguments: [
-          {
-            id: "path",
-            label: "Path",
-            argument_type: "string",
-            required: true,
-            flag: null,
-            positional: 0,
-            default_value: null,
-          },
-        ],
-      }),
-    ]);
-
-    render(<App />);
-
-    const input = screen.getByLabelText("Command search");
-    fireEvent.change(input, { target: { value: "tp" } });
-
-    expect(await screen.findByText("Teleport")).toBeTruthy();
-    await userEvent.keyboard("{Enter}");
-
-    expect(await screen.findByText("Step 1 of 1")).toBeTruthy();
-    expect(launcherApi.executeLauncherCommand).not.toHaveBeenCalledWith("user.teleport", {}, []);
-  });
-
   it("shows the interactive loading state and submits the selected item", async () => {
     const pendingExecution = deferred<CommandInvocationResult>();
     const session = interactiveSession();
@@ -342,13 +276,14 @@ describe("App", () => {
           title: "Git Status",
           subtitle: "Run git status",
           input_mode: "raw_argv",
+          keywords: ["git-status"],
         }),
       ]);
 
     render(<App />);
 
     const input = screen.getByLabelText("Command search");
-    fireEvent.change(input, { target: { value: 'git status "/tmp/my repo"' } });
+    fireEvent.change(input, { target: { value: 'git-status "/tmp/my repo"' } });
 
     expect(await screen.findByText("Git Status")).toBeTruthy();
     expect(screen.queryByText("Step 1 of 1")).toBeNull();
@@ -359,6 +294,95 @@ describe("App", () => {
       expect(launcherApi.executeLauncherCommand).toHaveBeenCalledWith("user.git-status", {}, [
         "/tmp/my repo",
       ]);
+    });
+  });
+
+  it("executes raw argv commands from an exact keyword alias with trailing args", async () => {
+    vi.mocked(launcherApi.searchLauncher)
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        searchResult({
+          id: "user.teleport",
+          title: "Teleport",
+          subtitle: "Run teleport",
+          input_mode: "raw_argv",
+          keywords: ["tp"],
+        }),
+      ]);
+
+    render(<App />);
+
+    const input = screen.getByLabelText("Command search");
+    fireEvent.change(input, { target: { value: "tp 1" } });
+
+    expect(await screen.findByText("Teleport")).toBeTruthy();
+
+    await userEvent.keyboard("{Enter}");
+
+    await waitFor(() => {
+      expect(launcherApi.executeLauncherCommand).toHaveBeenCalledWith(
+        "user.teleport",
+        {},
+        ["1"],
+      );
+    });
+  });
+
+  it("executes raw argv commands with trailing args when the full query already returns the alias match", async () => {
+    vi.mocked(launcherApi.searchLauncher).mockResolvedValue([
+      searchResult({
+        id: "user.teleport",
+        title: "Teleport",
+        subtitle: "Run teleport",
+        input_mode: "raw_argv",
+        keywords: ["tp"],
+      }),
+    ]);
+
+    render(<App />);
+
+    const input = screen.getByLabelText("Command search");
+    fireEvent.change(input, { target: { value: "tp 1" } });
+
+    expect(await screen.findByText("Teleport")).toBeTruthy();
+
+    await userEvent.keyboard("{Enter}");
+
+    await waitFor(() => {
+      expect(launcherApi.executeLauncherCommand).toHaveBeenCalledWith(
+        "user.teleport",
+        {},
+        ["1"],
+      );
+    });
+  });
+
+  it("executes raw argv commands from an exact title alias with trailing args", async () => {
+    vi.mocked(launcherApi.searchLauncher).mockResolvedValue([
+      searchResult({
+        id: "user.talkpad-copy",
+        title: "tp",
+        subtitle: "Copy a Talkpad note to the clipboard",
+        input_mode: "raw_argv",
+        keywords: ["talkpad", "note", "clipboard", "copy", "offset"],
+      }),
+    ]);
+
+    render(<App />);
+
+    const input = screen.getByLabelText("Command search");
+    fireEvent.change(input, { target: { value: "tp 1" } });
+
+    expect(await screen.findByText("tp")).toBeTruthy();
+
+    await userEvent.keyboard("{Enter}");
+
+    await waitFor(() => {
+      expect(launcherApi.executeLauncherCommand).toHaveBeenCalledWith(
+        "user.talkpad-copy",
+        {},
+        ["1"],
+      );
     });
   });
 

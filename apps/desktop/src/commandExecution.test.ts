@@ -2,11 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   beginPendingExecution,
   currentArgumentInputValue,
+  matchesExactKeywordAlias,
   parseCommandLine,
   type PendingExecution,
   resolveInlineArgv,
   resolvePendingExecutionStep,
-  resolveStructuredDirectExecution,
   scheduleAfterNextPaint,
   type SearchResult,
 } from "./commandExecution";
@@ -157,85 +157,75 @@ describe("commandExecution helpers", () => {
     });
   });
 
-  it("derives inline argv for raw custom commands", () => {
+  it("uses fallback argv for raw custom commands", () => {
     expect(
       resolveInlineArgv(
         searchResult({
-          title: "Git Status",
           input_mode: "raw_argv",
         }),
         'git status "/tmp/my repo"',
+        ["/tmp/my repo"],
       ),
     ).toEqual({
+      kind: "fallback",
       argv: ["/tmp/my repo"],
-      error: null,
     });
   });
 
-  it("allows direct execution for exact structured keyword aliases when defaults satisfy args", () => {
+  it("extracts argv from an exact keyword alias", () => {
     expect(
-      resolveStructuredDirectExecution(
+      resolveInlineArgv(
         searchResult({
-          title: "Teleport",
+          input_mode: "raw_argv",
           keywords: ["tp"],
-          arguments: [
-            {
-              id: "profile",
-              label: "Profile",
-              argument_type: "string",
-              required: true,
-              flag: "--profile",
-              positional: null,
-              default_value: { type: "string", value: "default" },
-            },
-          ],
         }),
-        "tp",
+        'tp "/tmp/my repo"',
       ),
     ).toEqual({
-      canExecute: true,
-      matchesExactAlias: true,
+      kind: "matched",
+      argv: ["/tmp/my repo"],
     });
   });
 
-  it("keeps the prompt for exact structured aliases when a required arg has no default", () => {
+  it("extracts argv from an exact title alias", () => {
     expect(
-      resolveStructuredDirectExecution(
+      resolveInlineArgv(
         searchResult({
-          keywords: ["tp"],
-          arguments: [
-            {
-              id: "path",
-              label: "Path",
-              argument_type: "string",
-              required: true,
-              flag: null,
-              positional: 0,
-              default_value: null,
-            },
-          ],
+          title: "tp",
+          input_mode: "raw_argv",
+          keywords: ["talkpad"],
         }),
-        "tp",
+        'tp "/tmp/my repo"',
       ),
     ).toEqual({
-      canExecute: false,
-      matchesExactAlias: true,
+      kind: "matched",
+      argv: ["/tmp/my repo"],
     });
   });
 
-  it("does not treat partial structured queries as direct-run aliases", () => {
+  it("matches exact keyword aliases case-insensitively", () => {
     expect(
-      resolveStructuredDirectExecution(
+      matchesExactKeywordAlias(
         searchResult({
-          title: "Teleport Project",
+          input_mode: "raw_argv",
           keywords: ["tp"],
         }),
-        "tele",
+        ["TP"],
       ),
-    ).toEqual({
-      canExecute: false,
-      matchesExactAlias: false,
-    });
+    ).toBe(true);
+  });
+
+  it("matches exact title aliases case-insensitively", () => {
+    expect(
+      matchesExactKeywordAlias(
+        searchResult({
+          title: "tp",
+          input_mode: "raw_argv",
+          keywords: ["talkpad"],
+        }),
+        ["TP"],
+      ),
+    ).toBe(true);
   });
 
   it("schedules work after the next paint boundary", () => {

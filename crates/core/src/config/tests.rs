@@ -125,7 +125,7 @@ url = "github.com"
 
 #[allow(clippy::unwrap_used)]
 #[test]
-fn rejects_raw_argv_commands_with_structured_arguments() {
+fn loads_legacy_structured_command_fields_but_ignores_them() {
     let _env_guard = env_lock().lock().unwrap();
     let config_home = unique_dir();
     let rayon_dir = config_home.join("rayon");
@@ -138,7 +138,7 @@ plugin_id = "user.commands"
 [[commands]]
 id = "user.echo"
 title = "Echo"
-input_mode = "raw_argv"
+input_mode = "structured"
 program = "/bin/echo"
 
 [[commands.arguments]]
@@ -153,16 +153,15 @@ positional = 0
 
     let previous = env::var_os("XDG_CONFIG_HOME");
     env::set_var("XDG_CONFIG_HOME", &config_home);
-    let result = load_config();
+    let loaded = load_config().unwrap();
     if let Some(previous) = previous {
         env::set_var("XDG_CONFIG_HOME", previous);
     } else {
         env::remove_var("XDG_CONFIG_HOME");
     }
 
-    assert!(matches!(
-        result,
-        Err(ref error)
-            if error.contains("cannot define arguments when input_mode is raw_argv")
-    ));
+    let commands = loaded.command_providers[0].commands();
+    assert_eq!(commands.len(), 1);
+    assert_eq!(commands[0].id.to_string(), "user.echo");
+    assert!(commands[0].arguments.is_empty());
 }

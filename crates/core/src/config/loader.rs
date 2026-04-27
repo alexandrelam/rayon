@@ -29,18 +29,6 @@ pub(super) fn load_manifest_bundle(
     let mut commands_by_id = HashMap::with_capacity(commands.len());
 
     for command in commands {
-        if command.input_mode == CommandInputMode::RawArgv
-            && command
-                .arguments
-                .as_ref()
-                .is_some_and(|arguments| !arguments.is_empty())
-        {
-            return Err(format!(
-                "command '{}' cannot define arguments when input_mode is raw_argv",
-                command.id
-            ));
-        }
-
         let command_id = CommandId::from(command.id.clone());
         let definition = CommandDefinition {
             id: command_id.clone(),
@@ -48,14 +36,8 @@ pub(super) fn load_manifest_bundle(
             subtitle: command.subtitle.clone(),
             owner_plugin_id: plugin_id.clone(),
             keywords: command.keywords.clone().unwrap_or_default(),
-            input_mode: command.input_mode,
-            arguments: command
-                .arguments
-                .clone()
-                .unwrap_or_default()
-                .into_iter()
-                .map(Into::into)
-                .collect(),
+            input_mode: CommandInputMode::RawArgv,
+            arguments: Vec::new(),
         };
         let spec = ExecutableCommandSpec::from_manifest_command(base_dir, &definition, command);
 

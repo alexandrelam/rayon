@@ -75,10 +75,10 @@ export type ParsedCommandLine =
   | { kind: "success"; tokens: string[] }
   | { kind: "error"; message: string };
 
-export type StructuredDirectExecution = {
-  canExecute: boolean;
-  matchesExactAlias: boolean;
-};
+export type InlineArgvResolution =
+  | { kind: "matched"; argv: string[] }
+  | { kind: "fallback"; argv: string[] }
+  | { kind: "error"; message: string };
 
 type FrameScheduler = (callback: () => void) => void;
 type TaskScheduler = (callback: () => void) => void;
@@ -192,37 +192,6 @@ export function resolvePendingExecutionStep(
   return buildPendingExecutionStep(pendingExecution, nextValues);
 }
 
-export function resolveStructuredDirectExecution(
-  result: SearchResult,
-  query: string,
-): StructuredDirectExecution {
-  if (
-    result.kind !== "command" ||
-    result.input_mode !== "structured" ||
-    result.starts_interactive_session
-  ) {
-    return {
-      canExecute: false,
-      matchesExactAlias: false,
-    };
-  }
-
-  const matchesExactAlias = isExactCommandAliasMatch(result, query);
-  if (!matchesExactAlias) {
-    return {
-      canExecute: false,
-      matchesExactAlias,
-    };
-  }
-
-  return {
-    canExecute: result.arguments.every((argument) => {
-      return !argument.required || argument.default_value !== null;
-    }),
-    matchesExactAlias,
-  };
-}
-
 export function scheduleAfterNextPaint(
   callback: () => void,
   scheduleFrame: FrameScheduler = (nextCallback) => {
@@ -322,25 +291,26 @@ export function resolveInlineArgv(
   result: SearchResult,
   query: string,
   fallbackArgv: string[] = [],
-): { argv: string[]; error: string | null } {
+): InlineArgvResolution {
   if (result.kind !== "command" || result.input_mode !== "raw_argv") {
-    return { argv: [], error: null };
+    return { kind: "fallback", argv: [] };
   }
 
   const parsed = parseCommandLine(query);
   if (parsed.kind === "error") {
-    return { argv: [], error: parsed.message };
+    return { kind: "error", message: parsed.message };
   }
 
-  const matchedTokenCount = longestCommandPrefixMatch(result, parsed.tokens);
-  if (matchedTokenCount > 0) {
-    return {
-      argv: parsed.tokens.slice(matchedTokenCount),
-      error: null,
-    };
+  const matchedArgv = argvFromExactKeywordAlias(result, parsed.tokens);
+  if (matchedArgv) {
+    return { kind: "matched", argv: matchedArgv };
   }
 
-  return { argv: fallbackArgv, error: null };
+  return { kind: "fallback", argv: fallbackArgv };
+}
+
+export function matchesExactKeywordAlias(result: SearchResult, tokens: string[]): boolean {
+  return argvFromExactKeywordAlias(result, tokens) !== null;
 }
 
 function buildPendingExecutionStep(
@@ -366,64 +336,6 @@ function buildPendingExecutionStep(
   };
 }
 
-function longestCommandPrefixMatch(result: SearchResult, tokens: string[]): number {
-  const candidates = [
-    tokenizeCommandAlias(result.title),
-    tokenizeCommandAlias(result.id),
-    ...result.keywords.map(tokenizeCommandAlias),
-  ];
-  const idSegments = result.id.split(".");
-  const lastSegment = idSegments[idSegments.length - 1];
-  if (lastSegment) {
-    candidates.push(tokenizeCommandAlias(lastSegment));
-  }
-
-  let longestMatch = 0;
-  for (const candidate of candidates) {
-    if (candidate.length === 0 || candidate.length > tokens.length) {
-      continue;
-    }
-
-    const matches = candidate.every((token, index) => token === normalizeToken(tokens[index]));
-    if (matches) {
-      longestMatch = Math.max(longestMatch, candidate.length);
-    }
-  }
-
-  return longestMatch;
-}
-
-function isExactCommandAliasMatch(result: SearchResult, query: string): boolean {
-  const parsed = parseCommandLine(query);
-  if (parsed.kind === "error") {
-    return false;
-  }
-
-  const queryTokens = parsed.tokens.map(normalizeToken).filter((token) => token !== "");
-  if (queryTokens.length === 0) {
-    return false;
-  }
-
-  const candidates = [
-    tokenizeCommandAlias(result.title),
-    tokenizeCommandAlias(result.id),
-    ...result.keywords.map(tokenizeCommandAlias),
-  ];
-  const idSegments = result.id.split(".");
-  const lastSegment = idSegments[idSegments.length - 1];
-  if (lastSegment) {
-    candidates.push(tokenizeCommandAlias(lastSegment));
-  }
-
-  return candidates.some((candidate) => {
-    if (candidate.length !== queryTokens.length) {
-      return false;
-    }
-
-    return candidate.every((token, index) => token === queryTokens[index]);
-  });
-}
-
 function toArgumentsMap(
   values: Partial<Record<string, CommandArgumentValue>>,
 ): Record<string, CommandArgumentValue> {
@@ -434,9 +346,31 @@ function toArgumentsMap(
   );
 }
 
-function tokenizeCommandAlias(value: string): string[] {
+function argvFromExactKeywordAlias(result: SearchResult, tokens: string[]): string[] | null {
+  if (result.kind !== "command" || result.input_mode !== "raw_argv") {
+    return null;
+  }
+
+  const normalizedTokens = tokens.map(normalizeToken).filter((token) => token !== "");
+  const aliases = [result.title, ...result.keywords];
+  for (const alias of aliases) {
+    const aliasTokens = tokenizeAlias(alias);
+    if (aliasTokens.length === 0 || aliasTokens.length > normalizedTokens.length) {
+      continue;
+    }
+
+    const isMatch = aliasTokens.every((token, index) => token === normalizedTokens[index]);
+    if (isMatch) {
+      return tokens.slice(aliasTokens.length);
+    }
+  }
+
+  return null;
+}
+
+function tokenizeAlias(value: string): string[] {
   return value
-    .split(/[\s._:-]+/)
+    .split(/\s+/)
     .map(normalizeToken)
     .filter((token) => token !== "");
 }

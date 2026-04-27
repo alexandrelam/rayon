@@ -1,6 +1,3 @@
-use rayon_types::{
-    CommandArgumentDefinition, CommandArgumentType, CommandArgumentValue, CommandInputMode,
-};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
@@ -14,17 +11,19 @@ pub(super) struct PluginManifest {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 pub(crate) struct ManifestCommand {
     pub id: String,
     pub title: String,
     pub subtitle: Option<String>,
     pub keywords: Option<Vec<String>>,
     #[serde(default)]
-    pub input_mode: CommandInputMode,
+    pub input_mode: Option<String>,
     pub program: String,
     pub base_args: Option<Vec<String>>,
     pub working_dir: Option<String>,
     pub env: Option<BTreeMap<String, String>>,
+    #[serde(default)]
     pub arguments: Option<Vec<ManifestArgument>>,
 }
 
@@ -38,36 +37,16 @@ pub(super) struct ManifestBookmark {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 pub(crate) struct ManifestArgument {
     pub id: String,
     pub label: String,
     #[serde(rename = "type")]
-    pub argument_type: CommandArgumentType,
+    pub argument_type: String,
     #[serde(default)]
     pub required: bool,
     pub flag: Option<String>,
     pub positional: Option<usize>,
     pub default_string: Option<String>,
     pub default_boolean: Option<bool>,
-}
-
-impl From<ManifestArgument> for CommandArgumentDefinition {
-    fn from(value: ManifestArgument) -> Self {
-        let default_value = match value.argument_type {
-            CommandArgumentType::String => value.default_string.map(CommandArgumentValue::String),
-            CommandArgumentType::Boolean => {
-                value.default_boolean.map(CommandArgumentValue::Boolean)
-            }
-        };
-
-        Self {
-            id: value.id,
-            label: value.label,
-            argument_type: value.argument_type,
-            required: value.required,
-            flag: value.flag,
-            positional: value.positional,
-            default_value,
-        }
-    }
 }

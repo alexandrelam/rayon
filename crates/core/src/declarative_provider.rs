@@ -1,9 +1,6 @@
 use crate::config::manifest::ManifestCommand;
 use crate::{CommandError, CommandProvider};
-use rayon_types::{
-    CommandArgumentDefinition, CommandArgumentType, CommandArgumentValue, CommandDefinition,
-    CommandExecutionRequest, CommandExecutionResult, CommandInputMode,
-};
+use rayon_types::{CommandDefinition, CommandExecutionRequest, CommandExecutionResult};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -82,71 +79,8 @@ impl ExecutableCommandSpec {
         &self,
         request: &CommandExecutionRequest,
     ) -> Result<CommandExecutionResult, CommandError> {
-        if self.definition.input_mode == CommandInputMode::RawArgv {
-            return self.execute_raw_argv(request);
-        }
-
-        self.execute_structured(request)
-    }
-
-    fn execute_raw_argv(
-        &self,
-        request: &CommandExecutionRequest,
-    ) -> Result<CommandExecutionResult, CommandError> {
         let mut argv = self.base_args.clone();
         argv.extend(request.argv.clone());
-        self.run_command(argv)
-    }
-
-    fn execute_structured(
-        &self,
-        request: &CommandExecutionRequest,
-    ) -> Result<CommandExecutionResult, CommandError> {
-        let mut argv = self.base_args.clone();
-        let mut positional_values: BTreeMap<usize, String> = BTreeMap::new();
-
-        for argument in &self.definition.arguments {
-            let value = request
-                .arguments
-                .get(&argument.id)
-                .cloned()
-                .or_else(|| argument.default_value.clone());
-
-            let Some(value) = value else {
-                if argument.required {
-                    return Err(CommandError::InvalidArguments(format!(
-                        "missing required argument '{}'",
-                        argument.label
-                    )));
-                }
-                continue;
-            };
-
-            let encoded = encode_argument(argument, &value)?;
-            if let Some(positional_index) = argument.positional {
-                positional_values.insert(positional_index, encoded);
-                continue;
-            }
-
-            if let Some(flag) = &argument.flag {
-                match value {
-                    CommandArgumentValue::Boolean(true) => argv.push(flag.clone()),
-                    CommandArgumentValue::Boolean(false) => {}
-                    CommandArgumentValue::String(_) => {
-                        argv.push(flag.clone());
-                        argv.push(encoded);
-                    }
-                }
-                continue;
-            }
-
-            argv.push(encoded);
-        }
-
-        for (_, positional_value) in positional_values {
-            argv.push(positional_value);
-        }
-
         self.run_command(argv)
     }
 
@@ -187,24 +121,6 @@ impl ExecutableCommandSpec {
     }
 }
 
-fn encode_argument(
-    definition: &CommandArgumentDefinition,
-    value: &CommandArgumentValue,
-) -> Result<String, CommandError> {
-    match (&definition.argument_type, value) {
-        (CommandArgumentType::String, CommandArgumentValue::String(string_value)) => {
-            Ok(string_value.clone())
-        }
-        (CommandArgumentType::Boolean, CommandArgumentValue::Boolean(bool_value)) => {
-            Ok(bool_value.to_string())
-        }
-        (expected_type, actual_value) => Err(CommandError::InvalidArguments(format!(
-            "argument '{}' expected {:?}, got {:?}",
-            definition.label, expected_type, actual_value
-        ))),
-    }
-}
-
 fn resolve_path(base_dir: &Path, raw_path: &str) -> PathBuf {
     let path = PathBuf::from(raw_path);
     if path.is_absolute() {
@@ -218,7 +134,7 @@ fn resolve_path(base_dir: &Path, raw_path: &str) -> PathBuf {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use rayon_types::{CommandExecutionRequest, CommandId};
+    use rayon_types::{CommandExecutionRequest, CommandId, CommandInputMode};
 
     #[test]
     fn raw_argv_commands_append_request_argv_after_base_args() {
@@ -239,7 +155,7 @@ mod tests {
                 title: "Echo".into(),
                 subtitle: None,
                 keywords: Some(vec!["echo".into()]),
-                input_mode: CommandInputMode::RawArgv,
+                input_mode: None,
                 program: "/bin/echo".into(),
                 base_args: Some(vec!["hello".into()]),
                 working_dir: None,
