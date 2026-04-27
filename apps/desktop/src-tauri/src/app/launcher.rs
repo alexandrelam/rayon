@@ -435,6 +435,10 @@ url = "https://example.com/echo"
 
     #[test]
     fn build_launcher_registers_theme_command() {
+        let _env_guard = env_lock().lock().unwrap();
+        let previous = std::env::var_os("XDG_CONFIG_HOME");
+        std::env::remove_var("XDG_CONFIG_HOME");
+
         let search_index = Arc::new(StubSearchIndex::default());
         let platform: Arc<dyn AppPlatform> = Arc::new(StubPlatform);
         let clipboard = Arc::new(
@@ -450,6 +454,10 @@ url = "https://example.com/echo"
 
         let launcher = build_launcher(platform, search_index, clipboard, theme_settings).unwrap();
         let results = launcher.search("theme");
+
+        if let Some(previous) = previous {
+            std::env::set_var("XDG_CONFIG_HOME", previous);
+        }
 
         assert!(results
             .iter()
