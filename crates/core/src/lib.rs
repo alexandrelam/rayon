@@ -15,3 +15,4 @@ pub use config::{load_config, LoadedConfig};
 pub use launcher::{LauncherError, LauncherService};
 
 pub use catalog::{AppPlatform, SearchIndex};
+pub use rayon_types::SearchIndexStats;

@@ -1,8 +1,6 @@
-use super::{clipboard, launcher, paths};
-use rayon_core::{AppPlatform, LauncherService, SearchIndex};
-use rayon_db::TantivySearchIndex;
+use super::{adapters, clipboard, launcher, paths};
+use rayon_core::{AppPlatform, LauncherService, SearchIndex, APP_REINDEX_COMMAND_ID};
 use rayon_features::{ClipboardHistoryService, ThemeSettingsStore};
-use rayon_platform::MacOsAppManager;
 use rayon_types::{
     BrowserTab, CommandExecutionRequest, CommandExecutionResult, CommandInvocationResult,
     InteractiveSessionQueryRequest, InteractiveSessionState, InteractiveSessionSubmitRequest,
@@ -25,11 +23,10 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(app: &AppHandle) -> Result<Self, String> {
-        let app_index = Arc::new(
-            TantivySearchIndex::open_or_create(paths::app_search_index_path(app)?)
-                .map_err(|error| error.to_string())?,
-        );
-        let platform = Arc::new(MacOsAppManager);
+        let app_index = Arc::new(adapters::DesktopSearchIndex::open_or_create(
+            paths::app_search_index_path(app)?,
+        )?);
+        let platform = Arc::new(adapters::DesktopPlatform::new());
         let clipboard_access = Arc::new(clipboard::MacOsClipboardAccess);
         let clipboard_history = Arc::new(ClipboardHistoryService::new(
             clipboard_access.clone(),
@@ -86,6 +83,14 @@ impl AppState {
         &self,
         request: &CommandExecutionRequest,
     ) -> Result<CommandInvocationResult, String> {
+        if request.command_id.as_str() == APP_REINDEX_COMMAND_ID {
+            return self
+                .reload()
+                .map(|result| CommandInvocationResult::Completed {
+                    output: result.output,
+                });
+        }
+
         self.read_launcher()
             .execute_command(request)
             .map_err(|error| error.to_string())
@@ -133,7 +138,7 @@ impl AppState {
 struct BrowserTabSearchCache {
     tabs_by_id: HashMap<String, BrowserTab>,
     ordered_tab_ids: Vec<String>,
-    search_index: TantivySearchIndex,
+    search_index: rayon_db::TantivySearchIndex,
     initialized: bool,
 }
 
@@ -142,7 +147,7 @@ impl BrowserTabSearchCache {
         Ok(Self {
             tabs_by_id: HashMap::new(),
             ordered_tab_ids: Vec::new(),
-            search_index: TantivySearchIndex::create_in_memory()
+            search_index: rayon_db::TantivySearchIndex::create_in_memory()
                 .map_err(|error| error.to_string())?,
             initialized: false,
         })

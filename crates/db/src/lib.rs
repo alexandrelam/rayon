@@ -1,4 +1,4 @@
-use rayon_types::{SearchResultKind, SearchableItemDocument};
+use rayon_types::{SearchIndexStats, SearchResultKind, SearchableItemDocument};
 use std::collections::BTreeSet;
 use std::fmt;
 use std::fs;
@@ -12,13 +12,6 @@ use tantivy::schema::{Field, Schema, Value, STORED, STRING, TEXT};
 use tantivy::{doc, Index, IndexReader, TantivyDocument};
 
 const INDEX_WRITER_HEAP_BYTES: usize = 50_000_000;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SearchIndexStats {
-    pub discovered_count: usize,
-    pub indexed_count: usize,
-    pub skipped_count: usize,
-}
 
 #[derive(Debug)]
 pub enum TantivySearchIndexError {

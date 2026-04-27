@@ -1,7 +1,7 @@
 use super::service::LauncherService;
 use super::state::read_app_catalog;
-use rayon_db::SearchIndexStats;
-use rayon_types::{CommandInputMode, SearchResult, SearchResultKind};
+use crate::SearchIndexStats;
+use rayon_types::SearchResult;
 
 const SEARCH_LIMIT: usize = 20;
 
@@ -30,10 +30,6 @@ impl LauncherService {
         results
     }
 
-    pub fn search_browser_tabs(&self, query: &str) -> Vec<SearchResult> {
-        self.browser_tab_results(query)
-    }
-
     pub fn search_enabled(&self) -> bool {
         self.search_index.is_configured()
     }
@@ -44,34 +40,5 @@ impl LauncherService {
         documents.extend(app_documents);
         documents.extend(self.bookmark_catalog.searchable_documents());
         self.search_index.replace_items(&documents)
-    }
-
-    fn browser_tab_results(&self, query: &str) -> Vec<SearchResult> {
-        match self.platform.search_browser_tabs(query) {
-            Ok(tabs) => tabs
-                .into_iter()
-                .take(SEARCH_LIMIT)
-                .map(|tab| {
-                    let subtitle = tab.subtitle();
-                    SearchResult {
-                        id: tab.command_id(),
-                        title: tab.title,
-                        subtitle: Some(subtitle),
-                        icon_path: None,
-                        kind: SearchResultKind::BrowserTab,
-                        owner_plugin_id: None,
-                        keywords: Vec::new(),
-                        starts_interactive_session: false,
-                        close_launcher_on_success: true,
-                        input_mode: CommandInputMode::Structured,
-                        arguments: Vec::new(),
-                    }
-                })
-                .collect(),
-            Err(error) => {
-                eprintln!("browser tab search failed: {error}");
-                Vec::new()
-            }
-        }
     }
 }

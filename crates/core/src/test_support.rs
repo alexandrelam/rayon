@@ -2,9 +2,8 @@
 
 use crate::{
     AppPlatform, CommandError, CommandProvider, CommandRegistry, InteractiveSessionSubmitOutcome,
-    InteractiveSessionUpdate, LauncherService, SearchIndex,
+    InteractiveSessionUpdate, LauncherService, SearchIndex, SearchIndexStats,
 };
-use rayon_db::SearchIndexStats;
 use rayon_types::{
     BookmarkDefinition, BrowserTab, BrowserTabTarget, CommandArgumentDefinition,
     CommandArgumentType, CommandDefinition, CommandExecutionRequest, CommandExecutionResult,

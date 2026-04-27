@@ -1,11 +1,11 @@
 use super::error::LauncherError;
+use super::routing::{resolve_execution_target, ExecutionTarget};
 use super::service::LauncherService;
 use super::state::{next_session_id, write_app_catalog, write_interactive_sessions};
 use crate::catalog::AppCatalog;
-use crate::commands::APP_REINDEX_COMMAND_ID;
 use rayon_types::{
-    parse_browser_tab_command_id, CommandExecutionRequest, CommandExecutionResult, CommandId,
-    CommandInvocationResult, InteractiveSessionMetadata, InteractiveSessionState,
+    CommandExecutionRequest, CommandExecutionResult, CommandId, CommandInvocationResult,
+    InteractiveSessionMetadata, InteractiveSessionState,
 };
 
 impl LauncherService {
@@ -13,79 +13,48 @@ impl LauncherService {
         &self,
         request: &CommandExecutionRequest,
     ) -> Result<CommandInvocationResult, LauncherError> {
-        if request.command_id.as_str() == APP_REINDEX_COMMAND_ID {
-            let result = self.refresh_and_reindex()?;
-            return Ok(CommandInvocationResult::Completed {
-                output: result.output,
-            });
+        match resolve_execution_target(
+            &request.command_id,
+            self.bookmark_catalog.get(&request.command_id).is_some(),
+        ) {
+            ExecutionTarget::Reindex => {
+                let result = self.refresh_and_reindex()?;
+                Ok(CommandInvocationResult::Completed {
+                    output: result.output,
+                })
+            }
+            ExecutionTarget::App(command_id) => {
+                let result = self.launch_app(&command_id)?;
+                Ok(CommandInvocationResult::Completed {
+                    output: result.output,
+                })
+            }
+            ExecutionTarget::BrowserTab(target) => {
+                let result = self.focus_browser_tab(&target)?;
+                Ok(CommandInvocationResult::Completed {
+                    output: result.output,
+                })
+            }
+            ExecutionTarget::Bookmark(bookmark_id) => {
+                let result = self.open_bookmark(&bookmark_id)?;
+                Ok(CommandInvocationResult::Completed {
+                    output: result.output,
+                })
+            }
+            ExecutionTarget::Provider(command_id) => {
+                if let Some(session_owner) = self.registry.start_interactive_session(&command_id)? {
+                    return Ok(self.start_interactive_session(session_owner));
+                }
+
+                let result = self
+                    .registry
+                    .execute(request)
+                    .map_err(LauncherError::from)?;
+                Ok(CommandInvocationResult::Completed {
+                    output: result.output,
+                })
+            }
         }
-
-        if request.command_id.as_str().starts_with("app:macos:") {
-            let result = self.launch_app(&request.command_id)?;
-            return Ok(CommandInvocationResult::Completed {
-                output: result.output,
-            });
-        }
-
-        if let Some(target) = parse_browser_tab_command_id(&request.command_id) {
-            let result = self.focus_browser_tab(&target)?;
-            return Ok(CommandInvocationResult::Completed {
-                output: result.output,
-            });
-        }
-
-        if self.bookmark_catalog.get(&request.command_id).is_some() {
-            let result = self.open_bookmark(&request.command_id)?;
-            return Ok(CommandInvocationResult::Completed {
-                output: result.output,
-            });
-        }
-
-        if let Some(session_owner) = self
-            .registry
-            .start_interactive_session(&request.command_id)?
-        {
-            let session_id = next_session_id(&self.next_session_id);
-            let metadata = InteractiveSessionMetadata {
-                session_id: session_id.clone(),
-                command_id: session_owner.metadata.command_id.clone(),
-                title: session_owner.metadata.title,
-                subtitle: session_owner.metadata.subtitle,
-                input_placeholder: session_owner.metadata.input_placeholder,
-                completion_behavior: session_owner.metadata.completion_behavior,
-            };
-
-            write_interactive_sessions(&self.interactive_sessions).insert(
-                session_id.clone(),
-                super::state::ActiveInteractiveSession {
-                    provider_index: session_owner.provider_index,
-                    metadata: metadata.clone(),
-                },
-            );
-
-            return Ok(CommandInvocationResult::StartedSession {
-                session: InteractiveSessionState {
-                    session_id,
-                    command_id: metadata.command_id,
-                    title: metadata.title,
-                    subtitle: metadata.subtitle,
-                    input_placeholder: metadata.input_placeholder,
-                    completion_behavior: metadata.completion_behavior,
-                    query: String::new(),
-                    is_loading: true,
-                    results: Vec::new(),
-                    message: None,
-                },
-            });
-        }
-
-        let result = self
-            .registry
-            .execute(request)
-            .map_err(LauncherError::from)?;
-        Ok(CommandInvocationResult::Completed {
-            output: result.output,
-        })
     }
 
     fn refresh_and_reindex(&self) -> Result<CommandExecutionResult, LauncherError> {
@@ -157,5 +126,43 @@ impl LauncherService {
         Ok(CommandExecutionResult {
             output: "focused Chrome tab".into(),
         })
+    }
+
+    fn start_interactive_session(
+        &self,
+        session_owner: crate::commands::StartedInteractiveSession,
+    ) -> CommandInvocationResult {
+        let session_id = next_session_id(&self.next_session_id);
+        let metadata = InteractiveSessionMetadata {
+            session_id: session_id.clone(),
+            command_id: session_owner.metadata.command_id.clone(),
+            title: session_owner.metadata.title,
+            subtitle: session_owner.metadata.subtitle,
+            input_placeholder: session_owner.metadata.input_placeholder,
+            completion_behavior: session_owner.metadata.completion_behavior,
+        };
+
+        write_interactive_sessions(&self.interactive_sessions).insert(
+            session_id.clone(),
+            super::state::ActiveInteractiveSession {
+                provider_index: session_owner.provider_index,
+                metadata: metadata.clone(),
+            },
+        );
+
+        CommandInvocationResult::StartedSession {
+            session: InteractiveSessionState {
+                session_id,
+                command_id: metadata.command_id,
+                title: metadata.title,
+                subtitle: metadata.subtitle,
+                input_placeholder: metadata.input_placeholder,
+                completion_behavior: metadata.completion_behavior,
+                query: String::new(),
+                is_loading: true,
+                results: Vec::new(),
+                message: None,
+            },
+        }
     }
 }

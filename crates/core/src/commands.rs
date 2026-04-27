@@ -44,6 +44,8 @@ pub trait CommandProvider: Send + Sync {
             "interactive session submit is not supported".into(),
         ))
     }
+
+    fn end_interactive_session(&self, _session: &InteractiveSessionMetadata) {}
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -180,6 +182,14 @@ impl CommandRegistry {
         item_id: &str,
     ) -> Result<InteractiveSessionSubmitOutcome, CommandError> {
         self.providers[provider_index].submit_interactive_session(session, query, item_id)
+    }
+
+    pub(crate) fn end_interactive_session(
+        &self,
+        provider_index: usize,
+        session: &InteractiveSessionMetadata,
+    ) {
+        self.providers[provider_index].end_interactive_session(session);
     }
 
     pub fn search_results_by_id(&self) -> HashMap<String, SearchResult> {

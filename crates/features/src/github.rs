@@ -59,6 +59,12 @@ impl GitHubMyPrsProvider {
         session_prs.insert(session.session_id.clone(), prs.clone());
         Ok(prs)
     }
+
+    fn clear_session(&self, session_id: &str) {
+        if let Ok(mut session_prs) = self.session_prs.lock() {
+            session_prs.remove(session_id);
+        }
+    }
 }
 
 impl CommandProvider for GitHubMyPrsProvider {
@@ -140,15 +146,15 @@ impl CommandProvider for GitHubMyPrsProvider {
             .open_url(&selected.url)
             .map_err(CommandError::ExecutionFailed)?;
 
-        if let Ok(mut session_prs) = self.session_prs.lock() {
-            session_prs.remove(&session.session_id);
-        }
-
         Ok(InteractiveSessionSubmitOutcome::Completed(
             CommandExecutionResult {
                 output: format!("opened {}", selected.display_ref()),
             },
         ))
+    }
+
+    fn end_interactive_session(&self, session: &InteractiveSessionMetadata) {
+        self.clear_session(&session.session_id);
     }
 }
 

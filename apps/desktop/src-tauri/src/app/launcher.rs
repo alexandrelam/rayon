@@ -97,7 +97,7 @@ fn validate_bookmark_ids(
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use rayon_db::SearchIndexStats;
+    use rayon_core::SearchIndexStats;
     use rayon_features::ClipboardAccess;
     use rayon_types::{
         BrowserTab, BrowserTabTarget, CommandId, InstalledApp, ProcessMatch,
