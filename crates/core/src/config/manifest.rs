@@ -18,6 +18,8 @@ pub(crate) struct ManifestCommand {
     pub subtitle: Option<String>,
     pub keywords: Option<Vec<String>>,
     #[serde(default)]
+    pub close_launcher_on_success: bool,
+    #[serde(default)]
     pub input_mode: Option<String>,
     pub program: String,
     pub base_args: Option<Vec<String>>,

@@ -283,3 +283,17 @@ fn startup_reindexes_commands_and_apps() {
         .iter()
         .any(|document| document.id == CommandId::from("kill")));
 }
+
+#[allow(clippy::unwrap_used)]
+#[test]
+fn command_search_results_include_close_launcher_flag() {
+    let launcher = build_launcher_service(vec![String::from("echo")]);
+
+    let results = launcher.search("echo");
+    let command = results
+        .into_iter()
+        .find(|result| result.id == CommandId::from("echo"))
+        .unwrap();
+
+    assert!(!command.close_launcher_on_success);
+}

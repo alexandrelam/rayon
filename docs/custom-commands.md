@@ -23,6 +23,7 @@ id = "user.echo"
 title = "Echo"
 program = "/bin/echo"
 base_args = ["status"]
+close_launcher_on_success = true
 ```
 
 Supported command fields:
@@ -35,6 +36,7 @@ Supported command fields:
 - `base_args`: optional fixed arguments always passed before user input
 - `working_dir`: optional working directory
 - `env`: optional environment variables
+- `close_launcher_on_success`: optional boolean that hides Rayon after a successful run and restores focus to the previously active app
 
 ## Direct Execution
 
@@ -77,6 +79,7 @@ An exact command `title` also works as a runnable alias. Use `keywords` for extr
 - If `stdout` is empty and `stderr` has content, `stderr` is shown instead.
 - If both are empty, the app shows a generic completion message.
 - If the process exits with a non-zero status, the output is surfaced as an execution error.
+- If `close_launcher_on_success = true` and the command succeeds, Rayon closes immediately and restores focus to the app that was active before the launcher opened.
 
 ## Instructions For Codex Or Claude Code
 

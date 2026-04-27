@@ -13,6 +13,7 @@ impl CommandProvider for MaintenanceProvider {
             subtitle: Some("Refresh apps, commands, bookmarks, and search".into()),
             owner_plugin_id: "builtin.maintenance".into(),
             keywords: vec!["refresh".into(), "index".into()],
+            close_launcher_on_success: false,
             input_mode: CommandInputMode::Structured,
             arguments: Vec::new(),
         }]

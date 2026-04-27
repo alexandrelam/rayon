@@ -1,4 +1,4 @@
-use crate::{app::AppState, MAIN_WINDOW_LABEL};
+use crate::{app::AppState, shell, MAIN_WINDOW_LABEL};
 use rayon_core::APP_REINDEX_COMMAND_ID;
 use rayon_types::{
     CommandExecutionRequest, CommandInvocationResult, InteractiveSessionQueryRequest,
@@ -64,11 +64,12 @@ pub async fn submit_interactive_session(
 
 #[tauri::command]
 pub fn hide_launcher(app: AppHandle) -> Result<(), String> {
-    let window = app
-        .get_webview_window(MAIN_WINDOW_LABEL)
-        .ok_or_else(|| "main window is not available".to_string())?;
+    shell::hide_launcher(&app).map_err(|error| error.to_string())
+}
 
-    window.hide().map_err(|error| error.to_string())
+#[tauri::command]
+pub fn hide_launcher_and_restore_focus(app: AppHandle) -> Result<(), String> {
+    shell::hide_launcher_and_restore_focus(&app).map_err(|error| error.to_string())
 }
 
 #[tauri::command]

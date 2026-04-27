@@ -23,6 +23,7 @@ impl CommandProvider for TestProvider {
                 subtitle: None,
                 owner_plugin_id: "builtin.echo".into(),
                 keywords: vec![],
+                close_launcher_on_success: false,
                 input_mode: CommandInputMode::Structured,
                 arguments: vec![CommandArgumentDefinition {
                     id: String::from("message"),
@@ -40,6 +41,7 @@ impl CommandProvider for TestProvider {
                 subtitle: Some("Terminate a running process".into()),
                 owner_plugin_id: "builtin.kill".into(),
                 keywords: vec!["terminate".into()],
+                close_launcher_on_success: false,
                 input_mode: CommandInputMode::Structured,
                 arguments: vec![],
             },
@@ -113,6 +115,7 @@ impl CommandProvider for CompletingProvider {
             subtitle: Some("Open a pull request".into()),
             owner_plugin_id: "builtin.github".into(),
             keywords: vec!["github".into()],
+            close_launcher_on_success: false,
             input_mode: CommandInputMode::Structured,
             arguments: vec![],
         }]

@@ -11,6 +11,7 @@ const searchResult = (overrides: Partial<SearchResult> = {}): SearchResult => ({
   owner_plugin_id: "user.commands",
   keywords: [],
   starts_interactive_session: false,
+  close_launcher_on_success: false,
   input_mode: "structured",
   arguments: [],
   ...overrides,
@@ -19,6 +20,7 @@ const searchResult = (overrides: Partial<SearchResult> = {}): SearchResult => ({
 const pendingExecution: PendingExecution = {
   commandId: "echo",
   commandTitle: "Echo",
+  closeLauncherOnSuccess: false,
   arguments: [
     {
       id: "message",

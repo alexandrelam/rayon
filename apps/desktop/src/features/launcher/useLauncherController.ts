@@ -21,6 +21,7 @@ import { applyThemePreference } from "@/theme";
 import {
   executeLauncherCommand,
   hideLauncher,
+  hideLauncherAndRestoreFocus,
   refreshThemePreference,
   registerLauncherOpenedListener,
   searchInteractiveSession,
@@ -228,6 +229,7 @@ export function useLauncherController(): LauncherController {
     commandId: string,
     argumentsMap: Record<string, CommandArgumentValue>,
     argv: string[] = [],
+    closeLauncherOnSuccess = false,
     optimisticSessionId?: string,
   ) {
     try {
@@ -242,6 +244,22 @@ export function useLauncherController(): LauncherController {
         setPendingExecution(null);
         setSelectedIndex(0);
         void refreshThemePreference();
+        return;
+      }
+
+      if (closeLauncherOnSuccess) {
+        setExecutionResult("");
+        setError("");
+        setPendingExecution(null);
+        setInteractiveSession(null);
+        void refreshThemePreference();
+
+        try {
+          await hideLauncherAndRestoreFocus();
+          resetLauncher();
+        } catch (hideError) {
+          setError(hideError instanceof Error ? hideError.message : String(hideError));
+        }
         return;
       }
 
@@ -310,12 +328,18 @@ export function useLauncherController(): LauncherController {
         inputRef.current?.focus();
       });
       scheduleAfterNextPaint(() => {
-        void executeCommand(result.id, {}, inlineExecution.argv, optimisticSession.session_id);
+        void executeCommand(
+          result.id,
+          {},
+          inlineExecution.argv,
+          false,
+          optimisticSession.session_id,
+        );
       });
       return;
     }
 
-    await executeCommand(result.id, {}, inlineExecution.argv);
+    await executeCommand(result.id, {}, inlineExecution.argv, result.close_launcher_on_success);
   }
 
   async function executeSelectedCommand() {
@@ -416,7 +440,12 @@ export function useLauncherController(): LauncherController {
       return;
     }
 
-    await executeCommand(step.commandId, step.argumentsMap);
+    await executeCommand(
+      step.commandId,
+      step.argumentsMap,
+      [],
+      activePendingExecution.closeLauncherOnSuccess,
+    );
   }
 
   function onQueryChange(nextQuery: string) {

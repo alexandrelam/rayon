@@ -1,4 +1,7 @@
+#![allow(unexpected_cfgs)]
+
 use crate::MAIN_WINDOW_LABEL;
+use std::sync::{Mutex, OnceLock};
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
@@ -7,10 +10,17 @@ use tauri::{
 
 const LAUNCHER_OPENED_EVENT: &str = "launcher:opened";
 
+fn previous_frontmost_pid() -> &'static Mutex<Option<i32>> {
+    static PREVIOUS_FRONTMOST_PID: OnceLock<Mutex<Option<i32>>> = OnceLock::new();
+    PREVIOUS_FRONTMOST_PID.get_or_init(|| Mutex::new(None))
+}
+
 pub fn show_launcher(app: &AppHandle) -> tauri::Result<()> {
     let window = app
         .get_webview_window(MAIN_WINDOW_LABEL)
         .ok_or_else(|| tauri::Error::AssetNotFound(MAIN_WINDOW_LABEL.into()))?;
+
+    store_previous_frontmost_application();
 
     #[cfg(target_os = "macos")]
     {
@@ -25,13 +35,28 @@ pub fn show_launcher(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+pub fn hide_launcher(app: &AppHandle) -> tauri::Result<()> {
+    let window = app
+        .get_webview_window(MAIN_WINDOW_LABEL)
+        .ok_or_else(|| tauri::Error::AssetNotFound(MAIN_WINDOW_LABEL.into()))?;
+
+    window.hide()?;
+    Ok(())
+}
+
+pub fn hide_launcher_and_restore_focus(app: &AppHandle) -> tauri::Result<()> {
+    hide_launcher(app)?;
+    restore_previous_frontmost_application();
+    Ok(())
+}
+
 pub fn toggle_launcher(app: &AppHandle) -> tauri::Result<()> {
     let window = app
         .get_webview_window(MAIN_WINDOW_LABEL)
         .ok_or_else(|| tauri::Error::AssetNotFound(MAIN_WINDOW_LABEL.into()))?;
 
     if window.is_visible()? && window.is_focused()? {
-        window.hide()?;
+        hide_launcher(app)?;
         return Ok(());
     }
 
@@ -107,4 +132,82 @@ pub fn build_tray(app: &mut tauri::App) -> tauri::Result<()> {
         .build(app)?;
 
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+#[link(name = "AppKit", kind = "framework")]
+extern "C" {}
+
+#[cfg(target_os = "macos")]
+fn store_previous_frontmost_application() {
+    let pid = unsafe { frontmost_application_pid() };
+    if let Ok(mut previous_pid) = previous_frontmost_pid().lock() {
+        *previous_pid = pid;
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn store_previous_frontmost_application() {}
+
+#[cfg(target_os = "macos")]
+fn restore_previous_frontmost_application() {
+    let pid = previous_frontmost_pid()
+        .lock()
+        .ok()
+        .and_then(|mut previous_pid| previous_pid.take());
+
+    if let Some(pid) = pid {
+        unsafe {
+            let _ = activate_application(pid);
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn restore_previous_frontmost_application() {}
+
+#[cfg(target_os = "macos")]
+unsafe fn frontmost_application_pid() -> Option<i32> {
+    use objc::{class, msg_send, runtime::Object, sel, sel_impl};
+
+    let workspace: *mut Object = msg_send![class!(NSWorkspace), sharedWorkspace];
+    if workspace.is_null() {
+        return None;
+    }
+
+    let application: *mut Object = msg_send![workspace, frontmostApplication];
+    if application.is_null() {
+        return None;
+    }
+
+    let pid: i32 = msg_send![application, processIdentifier];
+    if pid == std::process::id() as i32 {
+        return None;
+    }
+
+    Some(pid)
+}
+
+#[cfg(target_os = "macos")]
+unsafe fn activate_application(pid: i32) -> bool {
+    use objc::{
+        class, msg_send,
+        runtime::{Object, BOOL, YES},
+        sel, sel_impl,
+    };
+
+    const NS_APPLICATION_ACTIVATE_ALL_WINDOWS: usize = 1 << 0;
+    const NS_APPLICATION_ACTIVATE_IGNORING_OTHER_APPS: usize = 1 << 1;
+
+    let running_application: *mut Object = msg_send![
+        class!(NSRunningApplication),
+        runningApplicationWithProcessIdentifier: pid
+    ];
+    if running_application.is_null() {
+        return false;
+    }
+
+    let options = NS_APPLICATION_ACTIVATE_ALL_WINDOWS | NS_APPLICATION_ACTIVATE_IGNORING_OTHER_APPS;
+    let activated: BOOL = msg_send![running_application, activateWithOptions: options];
+    activated == YES
 }

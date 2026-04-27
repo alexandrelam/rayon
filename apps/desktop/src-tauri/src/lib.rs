@@ -1,3 +1,5 @@
+#![allow(unexpected_cfgs)]
+
 mod app;
 mod invoke;
 mod shell;
@@ -42,6 +44,7 @@ pub fn run() {
             invoke::launcher::search_interactive_session,
             invoke::launcher::submit_interactive_session,
             invoke::launcher::hide_launcher,
+            invoke::launcher::hide_launcher_and_restore_focus,
             invoke::launcher::resize_launcher,
             invoke::preferences::get_theme_preference
         ])

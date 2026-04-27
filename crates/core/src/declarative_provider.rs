@@ -144,6 +144,7 @@ mod tests {
             subtitle: None,
             owner_plugin_id: "user.commands".into(),
             keywords: vec!["echo".into()],
+            close_launcher_on_success: false,
             input_mode: CommandInputMode::RawArgv,
             arguments: vec![],
         };
@@ -155,6 +156,7 @@ mod tests {
                 title: "Echo".into(),
                 subtitle: None,
                 keywords: Some(vec!["echo".into()]),
+                close_launcher_on_success: false,
                 input_mode: None,
                 program: "/bin/echo".into(),
                 base_args: Some(vec!["hello".into()]),

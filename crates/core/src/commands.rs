@@ -197,6 +197,7 @@ impl CommandRegistry {
                         owner_plugin_id: Some(command.definition.owner_plugin_id.clone()),
                         keywords: command.definition.keywords.clone(),
                         starts_interactive_session: command.starts_interactive_session,
+                        close_launcher_on_success: command.definition.close_launcher_on_success,
                         input_mode: command.definition.input_mode,
                         arguments: command.definition.arguments.clone(),
                     },
