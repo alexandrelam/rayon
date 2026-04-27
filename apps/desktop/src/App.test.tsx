@@ -320,11 +320,7 @@ describe("App", () => {
     await userEvent.keyboard("{Enter}");
 
     await waitFor(() => {
-      expect(launcherApi.executeLauncherCommand).toHaveBeenCalledWith(
-        "user.teleport",
-        {},
-        ["1"],
-      );
+      expect(launcherApi.executeLauncherCommand).toHaveBeenCalledWith("user.teleport", {}, ["1"]);
     });
   });
 
@@ -349,11 +345,7 @@ describe("App", () => {
     await userEvent.keyboard("{Enter}");
 
     await waitFor(() => {
-      expect(launcherApi.executeLauncherCommand).toHaveBeenCalledWith(
-        "user.teleport",
-        {},
-        ["1"],
-      );
+      expect(launcherApi.executeLauncherCommand).toHaveBeenCalledWith("user.teleport", {}, ["1"]);
     });
   });
 
@@ -378,11 +370,9 @@ describe("App", () => {
     await userEvent.keyboard("{Enter}");
 
     await waitFor(() => {
-      expect(launcherApi.executeLauncherCommand).toHaveBeenCalledWith(
-        "user.talkpad-copy",
-        {},
-        ["1"],
-      );
+      expect(launcherApi.executeLauncherCommand).toHaveBeenCalledWith("user.talkpad-copy", {}, [
+        "1",
+      ]);
     });
   });
 
