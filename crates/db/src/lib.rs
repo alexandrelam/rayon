@@ -250,6 +250,7 @@ fn search_kind(kind: SearchResultKind) -> &'static str {
         SearchResultKind::Command => "command",
         SearchResultKind::Application => "application",
         SearchResultKind::Bookmark => "bookmark",
+        SearchResultKind::BrowserTab => "browser_tab",
     }
 }
 

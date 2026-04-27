@@ -1,8 +1,8 @@
 use rayon_db::{SearchIndexStats, TantivySearchIndex};
 use rayon_platform::MacOsAppManager;
 use rayon_types::{
-    BookmarkDefinition, CommandId, CommandInputMode, InstalledApp, ProcessMatch, SearchResult,
-    SearchResultKind, SearchableItemDocument,
+    BookmarkDefinition, BrowserTab, BrowserTabTarget, CommandId, CommandInputMode, InstalledApp,
+    ProcessMatch, SearchResult, SearchResultKind, SearchableItemDocument,
 };
 use std::collections::HashMap;
 
@@ -10,6 +10,8 @@ pub trait AppPlatform: Send + Sync {
     fn discover_apps(&self) -> Result<Vec<InstalledApp>, String>;
     fn launch_app(&self, app: &InstalledApp) -> Result<(), String>;
     fn open_url(&self, url: &str) -> Result<(), String>;
+    fn search_browser_tabs(&self, query: &str) -> Result<Vec<BrowserTab>, String>;
+    fn focus_browser_tab(&self, target: &BrowserTabTarget) -> Result<(), String>;
     fn search_processes(&self, query: &str) -> Result<Vec<ProcessMatch>, String>;
     fn terminate_process(&self, pid: u32) -> Result<(), String>;
 }
@@ -31,6 +33,14 @@ impl AppPlatform for MacOsAppManager {
 
     fn open_url(&self, url: &str) -> Result<(), String> {
         MacOsAppManager::open_url(self, url)
+    }
+
+    fn search_browser_tabs(&self, query: &str) -> Result<Vec<BrowserTab>, String> {
+        MacOsAppManager::search_browser_tabs(self, query)
+    }
+
+    fn focus_browser_tab(&self, target: &BrowserTabTarget) -> Result<(), String> {
+        MacOsAppManager::focus_browser_tab(self, target)
     }
 
     fn search_processes(&self, query: &str) -> Result<Vec<ProcessMatch>, String> {

@@ -6,9 +6,10 @@ use crate::{
 };
 use rayon_db::SearchIndexStats;
 use rayon_types::{
-    BookmarkDefinition, CommandArgumentDefinition, CommandArgumentType, CommandDefinition,
-    CommandExecutionRequest, CommandExecutionResult, CommandId, CommandInputMode, InstalledApp,
-    InteractiveSessionMetadata, InteractiveSessionResult, ProcessMatch, SearchableItemDocument,
+    BookmarkDefinition, BrowserTab, BrowserTabTarget, CommandArgumentDefinition,
+    CommandArgumentType, CommandDefinition, CommandExecutionRequest, CommandExecutionResult,
+    CommandId, CommandInputMode, InstalledApp, InteractiveSessionMetadata,
+    InteractiveSessionResult, ProcessMatch, SearchableItemDocument,
 };
 use std::sync::{Arc, Mutex};
 
@@ -175,6 +176,8 @@ pub(crate) struct StubPlatform {
     pub apps: Vec<InstalledApp>,
     pub launched: Mutex<Vec<String>>,
     pub opened_urls: Mutex<Vec<String>>,
+    pub browser_tabs: Mutex<Vec<BrowserTab>>,
+    pub focused_browser_tabs: Mutex<Vec<BrowserTabTarget>>,
     pub process_search_results: Mutex<Vec<ProcessMatch>>,
     pub terminated_pids: Mutex<Vec<u32>>,
 }
@@ -191,6 +194,26 @@ impl AppPlatform for StubPlatform {
 
     fn open_url(&self, url: &str) -> Result<(), String> {
         self.opened_urls.lock().unwrap().push(url.to_string());
+        Ok(())
+    }
+
+    fn search_browser_tabs(&self, query: &str) -> Result<Vec<BrowserTab>, String> {
+        let normalized_query = query.trim().to_lowercase();
+        Ok(self
+            .browser_tabs
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|tab| tab.search_text().contains(&normalized_query))
+            .cloned()
+            .collect())
+    }
+
+    fn focus_browser_tab(&self, target: &BrowserTabTarget) -> Result<(), String> {
+        self.focused_browser_tabs
+            .lock()
+            .unwrap()
+            .push(target.clone());
         Ok(())
     }
 
@@ -242,6 +265,8 @@ pub(crate) fn build_launcher_service(search_results: Vec<String>) -> LauncherSer
         }],
         launched: Mutex::new(Vec::new()),
         opened_urls: Mutex::new(Vec::new()),
+        browser_tabs: Mutex::new(Vec::new()),
+        focused_browser_tabs: Mutex::new(Vec::new()),
         process_search_results: Mutex::new(Vec::new()),
         terminated_pids: Mutex::new(Vec::new()),
     });

@@ -1,5 +1,5 @@
 use plist::Value;
-use rayon_types::{CommandId, InstalledApp, ProcessMatch};
+use rayon_types::{BrowserTab, BrowserTabTarget, CommandId, InstalledApp, ProcessMatch};
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::env;
@@ -10,6 +10,8 @@ use std::process::Command;
 
 const APPLICATIONS_DIR: &str = "/Applications";
 const SYSTEM_APPLICATIONS_DIR: &str = "/System/Applications";
+const APPLE_SCRIPT_FIELD_SEPARATOR: char = '\u{001f}';
+const APPLE_SCRIPT_RECORD_SEPARATOR: char = '\u{001e}';
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct MacOsAppManager;
@@ -63,6 +65,46 @@ impl MacOsAppManager {
             Ok(())
         } else {
             Err(format!("failed to open {url}"))
+        }
+    }
+
+    pub fn search_browser_tabs(&self, query: &str) -> Result<Vec<BrowserTab>, String> {
+        let trimmed_query = query.trim();
+        if trimmed_query.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let output = Command::new("/usr/bin/osascript")
+            .arg("-e")
+            .arg(chrome_tabs_list_script())
+            .output()
+            .map_err(|error| format!("failed to list Chrome tabs: {error}"))?;
+
+        if !output.status.success() {
+            return Err(stderr_or_stdout(&output)
+                .unwrap_or_else(|| "failed to list Chrome tabs".to_string()));
+        }
+
+        let tabs = parse_chrome_tabs_output(&String::from_utf8_lossy(&output.stdout))?;
+        Ok(filter_browser_tabs(&tabs, trimmed_query))
+    }
+
+    pub fn focus_browser_tab(&self, target: &BrowserTabTarget) -> Result<(), String> {
+        if target.browser != "chrome" {
+            return Err(format!("unsupported browser target: {}", target.browser));
+        }
+
+        let output = Command::new("/usr/bin/osascript")
+            .arg("-e")
+            .arg(chrome_focus_tab_script(&target.window_id, target.tab_index))
+            .output()
+            .map_err(|error| format!("failed to focus Chrome tab: {error}"))?;
+
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(stderr_or_stdout(&output)
+                .unwrap_or_else(|| "failed to focus Chrome tab".to_string()))
         }
     }
 
@@ -209,6 +251,165 @@ fn is_app_bundle(path: &Path) -> bool {
 
 fn compare_app_priority(left: &InstalledApp, right: &InstalledApp) -> Ordering {
     app_path_rank(&left.path).cmp(&app_path_rank(&right.path))
+}
+
+fn stderr_or_stdout(output: &std::process::Output) -> Option<String> {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if !stderr.is_empty() {
+        return Some(stderr);
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if !stdout.is_empty() {
+        return Some(stdout);
+    }
+
+    None
+}
+
+fn chrome_tabs_list_script() -> &'static str {
+    r#"
+set fieldSep to character id 31
+set recordSep to character id 30
+
+tell application "System Events"
+    if not (exists process "Google Chrome") then
+        return ""
+    end if
+end tell
+
+tell application "Google Chrome"
+    set rows to {}
+    repeat with w in every window
+        set windowId to (id of w as text)
+        set windowIndex to (index of w as text)
+        set activeIndex to (active tab index of w as text)
+        set tabIndex to 0
+        repeat with t in every tab of w
+            set tabIndex to tabIndex + 1
+            set rowParts to {windowId, windowIndex, activeIndex, (tabIndex as text), (title of t as text), (URL of t as text)}
+            set oldDelims to AppleScript's text item delimiters
+            set AppleScript's text item delimiters to fieldSep
+            set end of rows to (rowParts as text)
+            set AppleScript's text item delimiters to oldDelims
+        end repeat
+    end repeat
+end tell
+
+set oldDelims to AppleScript's text item delimiters
+set AppleScript's text item delimiters to recordSep
+set outputText to rows as text
+set AppleScript's text item delimiters to oldDelims
+return outputText
+"#
+}
+
+fn chrome_focus_tab_script(window_id: &str, tab_index: u32) -> String {
+    format!(
+        r#"
+tell application "System Events"
+    if not (exists process "Google Chrome") then
+        error "Google Chrome is not running"
+    end if
+end tell
+
+tell application "Google Chrome"
+    set targetWindow to first window whose id is "{}"
+    set index of targetWindow to 1
+    set active tab index of targetWindow to {}
+    activate
+end tell
+"#,
+        apple_script_string(window_id),
+        tab_index
+    )
+}
+
+fn apple_script_string(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+fn parse_chrome_tabs_output(output: &str) -> Result<Vec<BrowserTab>, String> {
+    let trimmed_output = output.trim();
+    if trimmed_output.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    trimmed_output
+        .split(APPLE_SCRIPT_RECORD_SEPARATOR)
+        .filter(|line| !line.trim().is_empty())
+        .map(parse_chrome_tab_row)
+        .collect()
+}
+
+fn parse_chrome_tab_row(row: &str) -> Result<BrowserTab, String> {
+    let parts = row
+        .split(APPLE_SCRIPT_FIELD_SEPARATOR)
+        .map(str::trim)
+        .collect::<Vec<_>>();
+
+    if parts.len() != 6 {
+        return Err(format!("invalid Chrome tab row: {row}"));
+    }
+
+    Ok(BrowserTab {
+        browser: "chrome".into(),
+        window_id: parts[0].to_string(),
+        window_index: parts[1]
+            .parse()
+            .map_err(|error| format!("invalid Chrome window index '{}': {error}", parts[1]))?,
+        active_tab_index: parts[2]
+            .parse()
+            .map_err(|error| format!("invalid Chrome active tab index '{}': {error}", parts[2]))?,
+        tab_index: parts[3]
+            .parse()
+            .map_err(|error| format!("invalid Chrome tab index '{}': {error}", parts[3]))?,
+        title: parts[4].to_string(),
+        url: parts[5].to_string(),
+    })
+}
+
+fn filter_browser_tabs(tabs: &[BrowserTab], query: &str) -> Vec<BrowserTab> {
+    let normalized_query = query.trim().to_lowercase();
+    let mut matches = tabs
+        .iter()
+        .filter_map(|tab| {
+            let score = browser_tab_match_score(tab, &normalized_query)?;
+            Some((score, tab.clone()))
+        })
+        .collect::<Vec<_>>();
+
+    matches.sort_by(|left, right| {
+        left.0
+            .cmp(&right.0)
+            .then_with(|| left.1.window_index.cmp(&right.1.window_index))
+            .then_with(|| left.1.tab_index.cmp(&right.1.tab_index))
+    });
+
+    matches.into_iter().map(|(_, tab)| tab).collect()
+}
+
+fn browser_tab_match_score(tab: &BrowserTab, query: &str) -> Option<(u8, u8, usize, usize)> {
+    let title = tab.title.to_lowercase();
+    let url = tab.url.to_lowercase();
+
+    if tab.is_active() && (title.contains(query) || url.contains(query)) {
+        return Some((0, 0, tab.window_index as usize, tab.tab_index as usize));
+    }
+    if title.starts_with(query) {
+        return Some((0, 1, tab.window_index as usize, tab.tab_index as usize));
+    }
+    if title.contains(query) {
+        return Some((0, 2, tab.window_index as usize, tab.tab_index as usize));
+    }
+    if url.starts_with(query) {
+        return Some((1, 0, tab.window_index as usize, tab.tab_index as usize));
+    }
+    if url.contains(query) {
+        return Some((1, 1, tab.window_index as usize, tab.tab_index as usize));
+    }
+
+    None
 }
 
 fn app_path_rank(path: &str) -> usize {

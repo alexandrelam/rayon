@@ -238,6 +238,73 @@ pub enum SearchResultKind {
     Command,
     Application,
     Bookmark,
+    BrowserTab,
+}
+
+pub const BROWSER_TAB_COMMAND_PREFIX: &str = "browser-tab";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BrowserTab {
+    pub browser: String,
+    pub window_id: String,
+    pub window_index: u32,
+    pub active_tab_index: u32,
+    pub tab_index: u32,
+    pub title: String,
+    pub url: String,
+}
+
+impl BrowserTab {
+    pub fn command_id(&self) -> CommandId {
+        CommandId::from(format!(
+            "{BROWSER_TAB_COMMAND_PREFIX}:{}:{}:{}",
+            self.browser, self.window_id, self.tab_index
+        ))
+    }
+
+    pub fn subtitle(&self) -> String {
+        format!("{} · {}", self.browser_label(), self.url)
+    }
+
+    pub fn search_text(&self) -> String {
+        format!("{} {} {}", self.title, self.url, self.browser).to_lowercase()
+    }
+
+    pub fn is_active(&self) -> bool {
+        self.window_index == 1 && self.active_tab_index == self.tab_index
+    }
+
+    pub fn browser_label(&self) -> &str {
+        match self.browser.as_str() {
+            "chrome" => "Google Chrome",
+            _ => self.browser.as_str(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BrowserTabTarget {
+    pub browser: String,
+    pub window_id: String,
+    pub tab_index: u32,
+}
+
+pub fn parse_browser_tab_command_id(command_id: &CommandId) -> Option<BrowserTabTarget> {
+    let mut parts = command_id.as_str().split(':');
+    let prefix = parts.next()?;
+    let browser = parts.next()?;
+    let window_id = parts.next()?;
+    let tab_index = parts.next()?.parse::<u32>().ok()?;
+
+    if prefix != BROWSER_TAB_COMMAND_PREFIX || parts.next().is_some() {
+        return None;
+    }
+
+    Some(BrowserTabTarget {
+        browser: browser.to_string(),
+        window_id: window_id.to_string(),
+        tab_index,
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -92,7 +92,8 @@ mod tests {
     use super::*;
     use rayon_db::SearchIndexStats;
     use rayon_types::{
-        CommandId, InstalledApp, ProcessMatch, SearchableItemDocument, ThemePreference,
+        BrowserTab, BrowserTabTarget, CommandId, InstalledApp, ProcessMatch,
+        SearchableItemDocument, ThemePreference,
     };
     use std::fs;
     use std::path::Path;
@@ -116,6 +117,14 @@ mod tests {
         }
 
         fn open_url(&self, _url: &str) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn search_browser_tabs(&self, _query: &str) -> Result<Vec<BrowserTab>, String> {
+            Ok(Vec::new())
+        }
+
+        fn focus_browser_tab(&self, _target: &BrowserTabTarget) -> Result<(), String> {
             Ok(())
         }
 

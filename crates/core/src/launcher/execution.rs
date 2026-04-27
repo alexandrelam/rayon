@@ -4,8 +4,8 @@ use super::state::{next_session_id, write_app_catalog, write_interactive_session
 use crate::catalog::AppCatalog;
 use crate::commands::APP_REINDEX_COMMAND_ID;
 use rayon_types::{
-    CommandExecutionRequest, CommandExecutionResult, CommandId, CommandInvocationResult,
-    InteractiveSessionMetadata, InteractiveSessionState,
+    parse_browser_tab_command_id, CommandExecutionRequest, CommandExecutionResult, CommandId,
+    CommandInvocationResult, InteractiveSessionMetadata, InteractiveSessionState,
 };
 
 impl LauncherService {
@@ -22,6 +22,13 @@ impl LauncherService {
 
         if request.command_id.as_str().starts_with("app:macos:") {
             let result = self.launch_app(&request.command_id)?;
+            return Ok(CommandInvocationResult::Completed {
+                output: result.output,
+            });
+        }
+
+        if let Some(target) = parse_browser_tab_command_id(&request.command_id) {
+            let result = self.focus_browser_tab(&target)?;
             return Ok(CommandInvocationResult::Completed {
                 output: result.output,
             });
@@ -134,6 +141,19 @@ impl LauncherService {
 
         Ok(CommandExecutionResult {
             output: format!("opened {}", bookmark.title),
+        })
+    }
+
+    fn focus_browser_tab(
+        &self,
+        target: &rayon_types::BrowserTabTarget,
+    ) -> Result<CommandExecutionResult, LauncherError> {
+        self.platform
+            .focus_browser_tab(target)
+            .map_err(LauncherError::Platform)?;
+
+        Ok(CommandExecutionResult {
+            output: "focused Chrome tab".into(),
         })
     }
 }
