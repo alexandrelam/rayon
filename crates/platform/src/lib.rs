@@ -7,6 +7,8 @@ use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::thread;
+use std::time::Duration;
 
 const APPLICATIONS_DIR: &str = "/Applications";
 const SYSTEM_APPLICATIONS_DIR: &str = "/System/Applications";
@@ -90,18 +92,33 @@ impl MacOsAppManager {
             return Err(format!("unsupported browser target: {}", target.browser));
         }
 
-        let output = Command::new("/usr/bin/osascript")
-            .arg("-e")
-            .arg(chrome_focus_tab_script(&target.window_id, target.tab_index))
-            .output()
-            .map_err(|error| format!("failed to focus Chrome tab: {error}"))?;
-
-        if output.status.success() {
-            Ok(())
-        } else {
-            Err(stderr_or_stdout(&output)
-                .unwrap_or_else(|| "failed to focus Chrome tab".to_string()))
+        let status = Command::new("/usr/bin/open")
+            .args(["-a", "Google Chrome"])
+            .status()
+            .map_err(|error| format!("failed to activate Google Chrome: {error}"))?;
+        if !status.success() {
+            return Err("failed to activate Google Chrome".to_string());
         }
+
+        let mut last_error = None;
+        for attempt in 0..4 {
+            let output = Command::new("/usr/bin/osascript")
+                .arg("-e")
+                .arg(chrome_focus_tab_script(&target.window_id, target.tab_index))
+                .output()
+                .map_err(|error| format!("failed to focus Chrome tab: {error}"))?;
+
+            if output.status.success() {
+                return Ok(());
+            }
+
+            last_error = stderr_or_stdout(&output);
+            if attempt < 3 {
+                thread::sleep(Duration::from_millis(100));
+            }
+        }
+
+        Err(last_error.unwrap_or_else(|| "failed to focus Chrome tab".to_string()))
     }
 
     pub fn search_processes(&self, query: &str) -> Result<Vec<ProcessMatch>, String> {
@@ -310,13 +327,21 @@ tell application "System Events"
 end tell
 
 tell application "Google Chrome"
+    if not (exists (first window whose id is "{}")) then
+        error "Chrome window not found"
+    end if
     set targetWindow to first window whose id is "{}"
+    if (count of tabs of targetWindow) < {} then
+        error "Chrome tab not found"
+    end if
     set index of targetWindow to 1
     set active tab index of targetWindow to {}
     activate
 end tell
 "#,
         apple_script_string(window_id),
+        apple_script_string(window_id),
+        tab_index,
         tab_index
     )
 }

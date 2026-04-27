@@ -53,6 +53,7 @@ export function useLauncherController(): LauncherController {
   const resultItemRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const interactiveSearchRequestId = useRef(0);
   const optimisticSessionCounter = useRef(0);
+  const previousQueryRef = useRef("");
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [interactiveSession, setInteractiveSession] = useState<InteractiveSessionState | null>(
@@ -132,11 +133,15 @@ export function useLauncherController(): LauncherController {
   }, []);
 
   useEffect(() => {
+    const previousQuery = previousQueryRef.current;
+
     if (!shouldRunSearch({ query, pendingExecution, interactiveSession })) {
       return;
     }
 
     const searchMode = getLauncherInputMode(query);
+    const refreshBrowserTabs =
+      searchMode === "browser_tabs" && getLauncherInputMode(previousQuery) !== "browser_tabs";
     let cancelled = false;
 
     async function runSearch() {
@@ -144,7 +149,10 @@ export function useLauncherController(): LauncherController {
         const nextResults =
           searchMode === "browser_tabs"
             ? {
-                results: await searchBrowserTabs(normalizeBrowserTabQuery(query)),
+                results: await searchBrowserTabs(
+                  normalizeBrowserTabQuery(query),
+                  refreshBrowserTabs,
+                ),
                 inlineFallbackArgv: [],
               }
             : await resolveLauncherSearch(query);
@@ -180,6 +188,10 @@ export function useLauncherController(): LauncherController {
       cancelled = true;
     };
   }, [interactiveSession, pendingExecution, query]);
+
+  useEffect(() => {
+    previousQueryRef.current = query;
+  }, [query]);
 
   useEffect(() => {
     if (!interactiveSessionId || interactiveSessionId.startsWith("pending:")) {
@@ -706,7 +718,7 @@ export function useLauncherController(): LauncherController {
         ? interactiveSession.input_placeholder
         : inputMode === "browser_tabs"
           ? "Search open Chrome tabs"
-        : "Type a command",
+          : "Type a command",
     inputMode,
     onQueryChange,
     onKeyDown,

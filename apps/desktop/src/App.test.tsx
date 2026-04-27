@@ -208,7 +208,7 @@ describe("App", () => {
     fireEvent.change(input, { target: { value: " issue" } });
 
     expect(await screen.findByText("Issue 15")).toBeTruthy();
-    expect(launcherApi.searchBrowserTabs).toHaveBeenCalledWith("issue");
+    expect(launcherApi.searchBrowserTabs).toHaveBeenCalledWith("issue", true);
     expect(launcherApi.searchLauncher).not.toHaveBeenCalled();
     expect(input.getAttribute("placeholder")).toBe("Search open Chrome tabs");
     expect(input.getAttribute("data-mode")).toBe("browser_tabs");
@@ -231,8 +231,33 @@ describe("App", () => {
     fireEvent.change(input, { target: { value: " " } });
 
     expect(await screen.findByText("Rayon")).toBeTruthy();
-    expect(launcherApi.searchBrowserTabs).toHaveBeenCalledWith("");
+    expect(launcherApi.searchBrowserTabs).toHaveBeenCalledWith("", true);
     expect(input.getAttribute("placeholder")).toBe("Search open Chrome tabs");
+  });
+
+  it("refreshes browser tabs only when entering tab mode", async () => {
+    vi.mocked(launcherApi.searchBrowserTabs).mockResolvedValue([
+      searchResult({
+        id: "browser-tab:chrome:window-1:1",
+        title: "Issue 15",
+        subtitle: "github.com",
+        kind: "browser_tab",
+        close_launcher_on_success: true,
+      }),
+    ]);
+
+    render(<App />);
+
+    const input = screen.getByLabelText("Command search");
+    fireEvent.change(input, { target: { value: " issue" } });
+    expect(await screen.findByText("Issue 15")).toBeTruthy();
+
+    fireEvent.change(input, { target: { value: " issue 15" } });
+
+    await waitFor(() => {
+      expect(launcherApi.searchBrowserTabs).toHaveBeenNthCalledWith(1, "issue", true);
+      expect(launcherApi.searchBrowserTabs).toHaveBeenNthCalledWith(2, "issue 15", false);
+    });
   });
 
   it("leaves browser tab mode when the leading space is removed", async () => {
