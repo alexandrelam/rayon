@@ -36,17 +36,23 @@ pub fn show_launcher(app: &AppHandle) -> tauri::Result<()> {
 }
 
 pub fn hide_launcher(app: &AppHandle) -> tauri::Result<()> {
+    hide_launcher_window(app)?;
+    clear_previous_frontmost_application();
+    Ok(())
+}
+
+pub fn hide_launcher_and_restore_focus(app: &AppHandle) -> tauri::Result<()> {
+    hide_launcher_window(app)?;
+    restore_previous_frontmost_application();
+    Ok(())
+}
+
+fn hide_launcher_window(app: &AppHandle) -> tauri::Result<()> {
     let window = app
         .get_webview_window(MAIN_WINDOW_LABEL)
         .ok_or_else(|| tauri::Error::AssetNotFound(MAIN_WINDOW_LABEL.into()))?;
 
     window.hide()?;
-    Ok(())
-}
-
-pub fn hide_launcher_and_restore_focus(app: &AppHandle) -> tauri::Result<()> {
-    hide_launcher(app)?;
-    restore_previous_frontmost_application();
     Ok(())
 }
 
@@ -149,6 +155,12 @@ fn store_previous_frontmost_application() {
 #[cfg(not(target_os = "macos"))]
 fn store_previous_frontmost_application() {}
 
+fn clear_previous_frontmost_application() {
+    if let Ok(mut previous_pid) = previous_frontmost_pid().lock() {
+        *previous_pid = None;
+    }
+}
+
 #[cfg(target_os = "macos")]
 fn restore_previous_frontmost_application() {
     let pid = previous_frontmost_pid()
@@ -164,7 +176,9 @@ fn restore_previous_frontmost_application() {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn restore_previous_frontmost_application() {}
+fn restore_previous_frontmost_application() {
+    clear_previous_frontmost_application();
+}
 
 #[cfg(target_os = "macos")]
 unsafe fn frontmost_application_pid() -> Option<i32> {
@@ -210,4 +224,42 @@ unsafe fn activate_application(pid: i32) -> bool {
     let options = NS_APPLICATION_ACTIVATE_ALL_WINDOWS | NS_APPLICATION_ACTIVATE_IGNORING_OTHER_APPS;
     let activated: BOOL = msg_send![running_application, activateWithOptions: options];
     activated == YES
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used, clippy::panic, clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    fn lock_previous_frontmost_pid() -> std::sync::MutexGuard<'static, Option<i32>> {
+        previous_frontmost_pid()
+            .lock()
+            .expect("previous frontmost pid mutex should not be poisoned")
+    }
+
+    #[test]
+    fn clear_previous_frontmost_application_resets_stored_pid() {
+        {
+            let mut previous_pid = lock_previous_frontmost_pid();
+            *previous_pid = Some(4242);
+        }
+
+        clear_previous_frontmost_application();
+
+        let previous_pid = lock_previous_frontmost_pid();
+        assert_eq!(*previous_pid, None);
+    }
+
+    #[test]
+    fn restore_previous_frontmost_application_consumes_stored_pid() {
+        {
+            let mut previous_pid = lock_previous_frontmost_pid();
+            *previous_pid = Some(-1);
+        }
+
+        restore_previous_frontmost_application();
+
+        let previous_pid = lock_previous_frontmost_pid();
+        assert_eq!(*previous_pid, None);
+    }
 }
