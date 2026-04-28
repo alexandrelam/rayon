@@ -58,6 +58,21 @@ Rayon tries to register `Command+Space` as the launcher shortcut. macOS Spotligh
 
 If `Command+Space` is unavailable, Rayon also tries `Command+Shift+Space` as a fallback.
 
+### Permissions On macOS
+
+Rayon can use a few macOS privacy permissions for launcher features that interact with other apps.
+
+- `System Settings > Privacy & Security > Accessibility`
+  Needed to raise and focus another app window.
+- `System Settings > Privacy & Security > Automation`
+  Needed when Rayon is allowed to control apps such as `Google Chrome` or `System Events`.
+- `System Settings > Privacy & Security > Screen & System Audio Recording` or `Screen Recording`
+  On some macOS setups, this may be needed for Rayon to read other apps' window metadata reliably.
+
+If Rayon does not appear in one of these lists, launch the packaged app from `Applications` first. If needed, click `+` in the relevant privacy panel and add `rayon.app` manually.
+
+If leading-space search shows browser tabs but not open windows, check `Accessibility` first. If it shows neither in a packaged build, check both `Automation` and `Screen Recording`.
+
 ## Build From Source
 
 If you want to build Rayon yourself, the repository is set up for a straightforward local workflow.
@@ -83,6 +98,14 @@ pnpm build
 pnpm test
 cargo test --workspace
 ```
+
+For a packaged desktop build, use:
+
+```bash
+pnpm tauri build
+```
+
+`pnpm tauri dev` and `pnpm tauri build` can behave differently on macOS because the packaged app has its own privacy permissions. If a feature works in dev but not in the built `.app`, review the `Accessibility`, `Automation`, and `Screen Recording` settings above for the packaged `rayon.app`.
 
 ## Configuration
 
