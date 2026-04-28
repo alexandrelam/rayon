@@ -203,8 +203,31 @@ impl LeadingSpaceSearchCache {
     }
 
     fn refresh(&mut self, platform: &dyn AppPlatform) -> Result<(), String> {
-        let tabs = platform.search_browser_tabs("")?;
-        let windows = platform.list_open_windows()?;
+        let tabs_result = platform.search_browser_tabs("");
+        let windows_result = platform.list_open_windows();
+        let mut failures = Vec::new();
+
+        let tabs = match tabs_result {
+            Ok(tabs) => tabs,
+            Err(error) => {
+                eprintln!("leading-space browser-tab refresh failed: {error}");
+                failures.push(format!("browser tabs: {error}"));
+                Vec::new()
+            }
+        };
+        let windows = match windows_result {
+            Ok(windows) => windows,
+            Err(error) => {
+                eprintln!("leading-space open-window refresh failed: {error}");
+                failures.push(format!("open windows: {error}"));
+                Vec::new()
+            }
+        };
+
+        if tabs.is_empty() && windows.is_empty() && !failures.is_empty() {
+            return Err(failures.join("; "));
+        }
+
         let ordered_item_ids = windows
             .iter()
             .map(OpenWindow::command_id)
@@ -344,7 +367,9 @@ mod tests {
 
     struct StubPlatform {
         browser_tabs: Mutex<Vec<BrowserTab>>,
+        browser_tabs_error: Mutex<Option<String>>,
         open_windows: Mutex<Vec<OpenWindow>>,
+        open_windows_error: Mutex<Option<String>>,
         search_calls: Mutex<usize>,
     }
 
@@ -367,6 +392,9 @@ mod tests {
 
         fn search_browser_tabs(&self, _query: &str) -> Result<Vec<BrowserTab>, String> {
             *self.search_calls.lock().unwrap() += 1;
+            if let Some(error) = self.browser_tabs_error.lock().unwrap().clone() {
+                return Err(error);
+            }
             Ok(self.browser_tabs.lock().unwrap().clone())
         }
 
@@ -376,6 +404,9 @@ mod tests {
 
         fn list_open_windows(&self) -> Result<Vec<OpenWindow>, String> {
             *self.search_calls.lock().unwrap() += 1;
+            if let Some(error) = self.open_windows_error.lock().unwrap().clone() {
+                return Err(error);
+            }
             Ok(self.open_windows.lock().unwrap().clone())
         }
 
@@ -427,7 +458,9 @@ mod tests {
                 1,
                 1,
             )]),
+            browser_tabs_error: Mutex::new(None),
             open_windows: Mutex::new(vec![sample_window("Rayon", "Arc", 101, true)]),
+            open_windows_error: Mutex::new(None),
             search_calls: Mutex::new(0),
         };
         let mut cache = LeadingSpaceSearchCache::new().unwrap();
@@ -444,7 +477,9 @@ mod tests {
     fn leading_space_search_cache_replaces_stale_items_on_refresh() {
         let platform = StubPlatform {
             browser_tabs: Mutex::new(vec![sample_tab("Old Tab", "https://old.example", 1, 1)]),
+            browser_tabs_error: Mutex::new(None),
             open_windows: Mutex::new(vec![sample_window("Old Window", "Arc", 202, true)]),
+            open_windows_error: Mutex::new(None),
             search_calls: Mutex::new(0),
         };
         let mut cache = LeadingSpaceSearchCache::new().unwrap();
@@ -472,10 +507,12 @@ mod tests {
                 sample_tab("Current", "https://current.example", 1, 1),
                 sample_tab("Other", "https://other.example", 2, 1),
             ]),
+            browser_tabs_error: Mutex::new(None),
             open_windows: Mutex::new(vec![
                 sample_window("Project", "Arc", 404, true),
                 sample_window("Notes", "Obsidian", 505, false),
             ]),
+            open_windows_error: Mutex::new(None),
             search_calls: Mutex::new(0),
         };
         let mut cache = LeadingSpaceSearchCache::new().unwrap();
@@ -504,7 +541,9 @@ mod tests {
                 1,
                 1,
             )]),
+            browser_tabs_error: Mutex::new(None),
             open_windows: Mutex::new(vec![sample_window("Project Board", "Linear", 606, true)]),
+            open_windows_error: Mutex::new(None),
             search_calls: Mutex::new(0),
         };
         let mut cache = LeadingSpaceSearchCache::new().unwrap();
@@ -514,5 +553,64 @@ mod tests {
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].kind, SearchResultKind::OpenWindow);
         assert_eq!(results[1].kind, SearchResultKind::BrowserTab);
+    }
+
+    #[test]
+    fn leading_space_search_keeps_window_results_when_tab_refresh_fails() {
+        let platform = StubPlatform {
+            browser_tabs: Mutex::new(Vec::new()),
+            browser_tabs_error: Mutex::new(Some(
+                "not authorized to send Apple events to Google Chrome".into(),
+            )),
+            open_windows: Mutex::new(vec![sample_window("Project Board", "Linear", 707, true)]),
+            open_windows_error: Mutex::new(None),
+            search_calls: Mutex::new(0),
+        };
+        let mut cache = LeadingSpaceSearchCache::new().unwrap();
+
+        let results = cache.search(&platform, "project", true);
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].kind, SearchResultKind::OpenWindow);
+    }
+
+    #[test]
+    fn leading_space_search_keeps_tab_results_when_window_refresh_fails() {
+        let platform = StubPlatform {
+            browser_tabs: Mutex::new(vec![sample_tab(
+                "Project Docs",
+                "https://example.com/docs",
+                1,
+                1,
+            )]),
+            browser_tabs_error: Mutex::new(None),
+            open_windows: Mutex::new(Vec::new()),
+            open_windows_error: Mutex::new(Some("screen recording access denied".into())),
+            search_calls: Mutex::new(0),
+        };
+        let mut cache = LeadingSpaceSearchCache::new().unwrap();
+
+        let results = cache.search(&platform, "project", true);
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].kind, SearchResultKind::BrowserTab);
+    }
+
+    #[test]
+    fn leading_space_search_returns_empty_when_all_sources_fail() {
+        let platform = StubPlatform {
+            browser_tabs: Mutex::new(Vec::new()),
+            browser_tabs_error: Mutex::new(Some(
+                "not authorized to send Apple events to Google Chrome".into(),
+            )),
+            open_windows: Mutex::new(Vec::new()),
+            open_windows_error: Mutex::new(Some("screen recording access denied".into())),
+            search_calls: Mutex::new(0),
+        };
+        let mut cache = LeadingSpaceSearchCache::new().unwrap();
+
+        let results = cache.search(&platform, "project", true);
+
+        assert!(results.is_empty());
     }
 }
