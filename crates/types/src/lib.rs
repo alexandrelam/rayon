@@ -250,13 +250,14 @@ impl ThemePreference {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum SearchResultKind {
     Command,
     Application,
     Bookmark,
     Image,
     BrowserTab,
+    OpenWindow,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -268,6 +269,7 @@ pub struct ImageAssetDefinition {
 }
 
 pub const BROWSER_TAB_COMMAND_PREFIX: &str = "browser-tab";
+pub const OPEN_WINDOW_COMMAND_PREFIX: &str = "open-window";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BrowserTab {
@@ -330,6 +332,78 @@ pub fn parse_browser_tab_command_id(command_id: &CommandId) -> Option<BrowserTab
         browser: browser.to_string(),
         window_id: window_id.to_string(),
         tab_index,
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenWindow {
+    pub application: String,
+    pub pid: i32,
+    pub bounds_x: i32,
+    pub bounds_y: i32,
+    pub bounds_width: i32,
+    pub bounds_height: i32,
+    pub title: String,
+    pub is_frontmost: bool,
+}
+
+impl OpenWindow {
+    pub fn command_id(&self) -> CommandId {
+        CommandId::from(format!(
+            "{OPEN_WINDOW_COMMAND_PREFIX}:{}:{}:{}:{}:{}",
+            self.pid, self.bounds_x, self.bounds_y, self.bounds_width, self.bounds_height
+        ))
+    }
+
+    pub fn display_title(&self) -> String {
+        if self.title.trim().is_empty() {
+            self.application.clone()
+        } else {
+            self.title.clone()
+        }
+    }
+
+    pub fn subtitle(&self) -> String {
+        if self.title.trim().is_empty() {
+            "Open window".into()
+        } else {
+            self.application.clone()
+        }
+    }
+
+    pub fn search_text(&self) -> String {
+        format!("{} {}", self.application, self.title).to_lowercase()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenWindowTarget {
+    pub pid: i32,
+    pub bounds_x: i32,
+    pub bounds_y: i32,
+    pub bounds_width: i32,
+    pub bounds_height: i32,
+}
+
+pub fn parse_open_window_command_id(command_id: &CommandId) -> Option<OpenWindowTarget> {
+    let mut parts = command_id.as_str().split(':');
+    let prefix = parts.next()?;
+    let pid = parts.next()?.parse::<i32>().ok()?;
+    let bounds_x = parts.next()?.parse::<i32>().ok()?;
+    let bounds_y = parts.next()?.parse::<i32>().ok()?;
+    let bounds_width = parts.next()?.parse::<i32>().ok()?;
+    let bounds_height = parts.next()?.parse::<i32>().ok()?;
+
+    if prefix != OPEN_WINDOW_COMMAND_PREFIX || parts.next().is_some() {
+        return None;
+    }
+
+    Some(OpenWindowTarget {
+        pid,
+        bounds_x,
+        bounds_y,
+        bounds_width,
+        bounds_height,
     })
 }
 

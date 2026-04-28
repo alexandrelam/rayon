@@ -212,7 +212,7 @@ describe("App", () => {
     expect(await screen.findByText("Issue 15")).toBeTruthy();
     expect(launcherApi.searchBrowserTabs).toHaveBeenCalledWith("issue", true);
     expect(launcherApi.searchLauncher).not.toHaveBeenCalled();
-    expect(input.getAttribute("placeholder")).toBe("Search open Chrome tabs");
+    expect(input.getAttribute("placeholder")).toBe("Search open windows and tabs");
     expect(input.getAttribute("data-mode")).toBe("browser_tabs");
   });
 
@@ -236,6 +236,26 @@ describe("App", () => {
     expect(await screen.findByText("Image")).toBeTruthy();
   });
 
+  it("renders leading-space window results with the window badge", async () => {
+    vi.mocked(launcherApi.searchBrowserTabs).mockResolvedValue([
+      searchResult({
+        id: "open-window:4242:10:20:1440:900",
+        title: "Project Board",
+        subtitle: "Linear",
+        kind: "open_window",
+        close_launcher_on_success: true,
+      }),
+    ]);
+
+    render(<App />);
+
+    const input = screen.getByLabelText("Command search");
+    fireEvent.change(input, { target: { value: " project" } });
+
+    expect(await screen.findByText("Project Board")).toBeTruthy();
+    expect(await screen.findByText("Window")).toBeTruthy();
+  });
+
   it("shows all tabs when the query is only a leading space", async () => {
     vi.mocked(launcherApi.searchBrowserTabs).mockResolvedValue([
       searchResult({
@@ -254,7 +274,7 @@ describe("App", () => {
 
     expect(await screen.findByText("Rayon")).toBeTruthy();
     expect(launcherApi.searchBrowserTabs).toHaveBeenCalledWith("", true);
-    expect(input.getAttribute("placeholder")).toBe("Search open Chrome tabs");
+    expect(input.getAttribute("placeholder")).toBe("Search open windows and tabs");
   });
 
   it("refreshes browser tabs only when entering tab mode", async () => {

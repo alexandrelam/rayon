@@ -722,7 +722,7 @@ export function useLauncherController(): LauncherController {
       : interactiveSession
         ? interactiveSession.input_placeholder
         : inputMode === "browser_tabs"
-          ? "Search open Chrome tabs"
+          ? "Search open windows and tabs"
           : "Type a command",
     inputMode,
     onQueryChange,

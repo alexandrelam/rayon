@@ -40,6 +40,9 @@ export function getInteractiveSubmitHint(session: InteractiveSessionState): stri
 }
 
 export function getSearchResultKind(result: SearchResult): string {
+  if (result.kind === "open_window") {
+    return "Window";
+  }
   if (result.kind === "browser_tab") {
     return "Tab";
   }

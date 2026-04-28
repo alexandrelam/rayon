@@ -31,7 +31,9 @@ pub fn built_in_providers(deps: BuiltInDependencies) -> Vec<Arc<dyn CommandProvi
 mod tests {
     use super::*;
     use rayon_core::CommandRegistry;
-    use rayon_types::{BrowserTab, BrowserTabTarget, CommandId, ProcessMatch};
+    use rayon_types::{
+        BrowserTab, BrowserTabTarget, CommandId, OpenWindow, OpenWindowTarget, ProcessMatch,
+    };
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -59,6 +61,14 @@ mod tests {
         }
 
         fn focus_browser_tab(&self, _target: &BrowserTabTarget) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn list_open_windows(&self) -> Result<Vec<OpenWindow>, String> {
+            Ok(Vec::new())
+        }
+
+        fn focus_open_window(&self, _target: &OpenWindowTarget) -> Result<(), String> {
             Ok(())
         }
 

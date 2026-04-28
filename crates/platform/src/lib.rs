@@ -1,9 +1,12 @@
 use plist::Value;
-use rayon_types::{BrowserTab, BrowserTabTarget, CommandId, InstalledApp, ProcessMatch};
+use rayon_types::{
+    BrowserTab, BrowserTabTarget, CommandId, InstalledApp, OpenWindow, OpenWindowTarget,
+    ProcessMatch,
+};
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::env;
-use std::ffi::OsStr;
+use std::ffi::{c_char, c_void, CStr, OsStr};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -14,6 +17,79 @@ const APPLICATIONS_DIR: &str = "/Applications";
 const SYSTEM_APPLICATIONS_DIR: &str = "/System/Applications";
 const APPLE_SCRIPT_FIELD_SEPARATOR: char = '\u{001f}';
 const APPLE_SCRIPT_RECORD_SEPARATOR: char = '\u{001e}';
+const OPEN_WINDOW_MATCH_TOLERANCE: i32 = 2;
+
+#[cfg(target_os = "macos")]
+type CFTypeRef = *const c_void;
+#[cfg(target_os = "macos")]
+type CFArrayRef = *const c_void;
+#[cfg(target_os = "macos")]
+type CFDictionaryRef = *const c_void;
+#[cfg(target_os = "macos")]
+type CFStringRef = *const c_void;
+#[cfg(target_os = "macos")]
+type CFNumberRef = *const c_void;
+
+#[cfg(target_os = "macos")]
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct CGPoint {
+    x: f64,
+    y: f64,
+}
+
+#[cfg(target_os = "macos")]
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct CGSize {
+    width: f64,
+    height: f64,
+}
+
+#[cfg(target_os = "macos")]
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct CGRect {
+    origin: CGPoint,
+    size: CGSize,
+}
+
+#[cfg(target_os = "macos")]
+const K_CF_STRING_ENCODING_UTF8: u32 = 0x0800_0100;
+#[cfg(target_os = "macos")]
+const K_CF_NUMBER_SINT32_TYPE: i32 = 3;
+#[cfg(target_os = "macos")]
+const K_CG_WINDOW_LIST_OPTION_ON_SCREEN_ONLY: u32 = 1 << 0;
+#[cfg(target_os = "macos")]
+const K_CG_WINDOW_LIST_EXCLUDE_DESKTOP_ELEMENTS: u32 = 1 << 4;
+
+#[cfg(target_os = "macos")]
+#[link(name = "ApplicationServices", kind = "framework")]
+extern "C" {
+    static kCGWindowOwnerPID: CFStringRef;
+    static kCGWindowOwnerName: CFStringRef;
+    static kCGWindowName: CFStringRef;
+    static kCGWindowBounds: CFStringRef;
+    static kCGWindowLayer: CFStringRef;
+
+    fn CGWindowListCopyWindowInfo(option: u32, relative_to_window: u32) -> CFArrayRef;
+    fn CGRectMakeWithDictionaryRepresentation(dict: CFDictionaryRef, rect: *mut CGRect) -> bool;
+    fn CFArrayGetCount(the_array: CFArrayRef) -> isize;
+    fn CFArrayGetValueAtIndex(the_array: CFArrayRef, idx: isize) -> *const c_void;
+    fn CFDictionaryGetValueIfPresent(
+        the_dict: CFDictionaryRef,
+        key: *const c_void,
+        value: *mut *const c_void,
+    ) -> u8;
+    fn CFNumberGetValue(number: CFNumberRef, the_type: i32, value_ptr: *mut c_void) -> u8;
+    fn CFRelease(cf: CFTypeRef);
+    fn CFStringGetCString(
+        the_string: CFStringRef,
+        buffer: *mut c_char,
+        buffer_size: isize,
+        encoding: u32,
+    ) -> u8;
+}
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct MacOsAppManager;
@@ -119,6 +195,71 @@ impl MacOsAppManager {
         }
 
         Err(last_error.unwrap_or_else(|| "failed to focus Chrome tab".to_string()))
+    }
+
+    pub fn list_open_windows(&self) -> Result<Vec<OpenWindow>, String> {
+        #[cfg(not(target_os = "macos"))]
+        {
+            Ok(Vec::new())
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            let window_list = unsafe {
+                CGWindowListCopyWindowInfo(
+                    K_CG_WINDOW_LIST_OPTION_ON_SCREEN_ONLY
+                        | K_CG_WINDOW_LIST_EXCLUDE_DESKTOP_ELEMENTS,
+                    0,
+                )
+            };
+            if window_list.is_null() {
+                return Err("failed to list open windows".into());
+            }
+
+            let _window_list_guard = CfReleaseGuard(window_list);
+            let mut windows = Vec::new();
+            let mut frontmost_available = true;
+            let count = unsafe { CFArrayGetCount(window_list) };
+            for index in 0..count {
+                let dictionary =
+                    unsafe { CFArrayGetValueAtIndex(window_list, index) as CFDictionaryRef };
+                if dictionary.is_null() {
+                    continue;
+                }
+
+                if let Some(mut window) = parse_open_window(dictionary) {
+                    if frontmost_available {
+                        window.is_frontmost = true;
+                        frontmost_available = false;
+                    }
+                    windows.push(window);
+                }
+            }
+
+            Ok(windows)
+        }
+    }
+
+    pub fn focus_open_window(&self, target: &OpenWindowTarget) -> Result<(), String> {
+        let mut last_error = None;
+        for attempt in 0..4 {
+            let output = Command::new("/usr/bin/osascript")
+                .arg("-e")
+                .arg(focus_open_window_script(target))
+                .output()
+                .map_err(|error| format!("failed to focus window: {error}"))?;
+
+            if output.status.success() {
+                return Ok(());
+            }
+
+            last_error = stderr_or_stdout(&output);
+            if attempt < 3 {
+                thread::sleep(Duration::from_millis(100));
+            }
+        }
+
+        Err(last_error.unwrap_or_else(|| "failed to focus window".to_string()))
     }
 
     pub fn search_processes(&self, query: &str) -> Result<Vec<ProcessMatch>, String> {
@@ -443,6 +584,173 @@ fn browser_tab_match_score(tab: &BrowserTab, query: &str) -> Option<(u8, u8, usi
     }
 
     None
+}
+
+#[cfg(target_os = "macos")]
+struct CfReleaseGuard(CFTypeRef);
+
+#[cfg(target_os = "macos")]
+impl Drop for CfReleaseGuard {
+    fn drop(&mut self) {
+        if !self.0.is_null() {
+            unsafe {
+                CFRelease(self.0);
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn parse_open_window(dictionary: CFDictionaryRef) -> Option<OpenWindow> {
+    let layer = cf_dictionary_i32(dictionary, unsafe { kCGWindowLayer })?;
+    if layer != 0 {
+        return None;
+    }
+
+    let pid = cf_dictionary_i32(dictionary, unsafe { kCGWindowOwnerPID })?;
+    if pid <= 0 {
+        return None;
+    }
+
+    let application = cf_dictionary_string(dictionary, unsafe { kCGWindowOwnerName })?;
+    if application.is_empty() || application == "Rayon" {
+        return None;
+    }
+
+    let title = cf_dictionary_string(dictionary, unsafe { kCGWindowName }).unwrap_or_default();
+    if title.trim().is_empty() {
+        return None;
+    }
+
+    let bounds = cf_dictionary_rect(dictionary, unsafe { kCGWindowBounds })?;
+    let bounds_x = bounds.origin.x.round() as i32;
+    let bounds_y = bounds.origin.y.round() as i32;
+    let bounds_width = bounds.size.width.round() as i32;
+    let bounds_height = bounds.size.height.round() as i32;
+    if bounds_width <= 1 || bounds_height <= 1 {
+        return None;
+    }
+
+    Some(OpenWindow {
+        application,
+        pid,
+        bounds_x,
+        bounds_y,
+        bounds_width,
+        bounds_height,
+        title,
+        is_frontmost: false,
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn cf_dictionary_value(dictionary: CFDictionaryRef, key: CFStringRef) -> Option<*const c_void> {
+    let mut value = std::ptr::null();
+    let found = unsafe { CFDictionaryGetValueIfPresent(dictionary, key, &mut value) };
+    if found == 0 || value.is_null() {
+        None
+    } else {
+        Some(value)
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn cf_dictionary_i32(dictionary: CFDictionaryRef, key: CFStringRef) -> Option<i32> {
+    let value = cf_dictionary_value(dictionary, key)? as CFNumberRef;
+    let mut number = 0_i32;
+    let success = unsafe {
+        CFNumberGetValue(
+            value,
+            K_CF_NUMBER_SINT32_TYPE,
+            (&mut number as *mut i32).cast::<c_void>(),
+        )
+    };
+    if success == 0 {
+        None
+    } else {
+        Some(number)
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn cf_dictionary_string(dictionary: CFDictionaryRef, key: CFStringRef) -> Option<String> {
+    let value = cf_dictionary_value(dictionary, key)? as CFStringRef;
+    cf_string_to_string(value)
+}
+
+#[cfg(target_os = "macos")]
+fn cf_dictionary_rect(dictionary: CFDictionaryRef, key: CFStringRef) -> Option<CGRect> {
+    let value = cf_dictionary_value(dictionary, key)? as CFDictionaryRef;
+    let mut rect = CGRect::default();
+    let success = unsafe { CGRectMakeWithDictionaryRepresentation(value, &mut rect) };
+    if success {
+        Some(rect)
+    } else {
+        None
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn cf_string_to_string(value: CFStringRef) -> Option<String> {
+    if value.is_null() {
+        return None;
+    }
+
+    let mut buffer = vec![0_u8; 4096];
+    let success = unsafe {
+        CFStringGetCString(
+            value,
+            buffer.as_mut_ptr().cast::<c_char>(),
+            buffer.len() as isize,
+            K_CF_STRING_ENCODING_UTF8,
+        )
+    };
+    if success == 0 {
+        return None;
+    }
+
+    unsafe { CStr::from_ptr(buffer.as_ptr().cast::<c_char>()) }
+        .to_str()
+        .ok()
+        .map(str::to_string)
+}
+
+fn focus_open_window_script(target: &OpenWindowTarget) -> String {
+    let pid = target.pid;
+    let x = target.bounds_x;
+    let y = target.bounds_y;
+    let width = target.bounds_width;
+    let height = target.bounds_height;
+    let tolerance = OPEN_WINDOW_MATCH_TOLERANCE;
+
+    format!(
+        r#"
+tell application "System Events"
+    if UI elements enabled is false then
+        error "Rayon needs Accessibility access to focus windows"
+    end if
+
+    if not (exists first application process whose unix id is {pid}) then
+        error "Window application is no longer running"
+    end if
+
+    tell first application process whose unix id is {pid}
+        set frontmost to true
+        repeat with w in windows
+            set windowPosition to position of w
+            set windowSize to size of w
+            if (abs((item 1 of windowPosition) - {x}) <= {tolerance}) and (abs((item 2 of windowPosition) - {y}) <= {tolerance}) and (abs((item 1 of windowSize) - {width}) <= {tolerance}) and (abs((item 2 of windowSize) - {height}) <= {tolerance}) then
+                perform action "AXRaise" of w
+                set value of attribute "AXMain" of w to true
+                return "ok"
+            end if
+        end repeat
+    end tell
+end tell
+
+error "Window not found"
+"#
+    )
 }
 
 fn app_path_rank(path: &str) -> usize {
