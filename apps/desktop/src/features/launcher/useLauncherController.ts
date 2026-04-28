@@ -251,6 +251,7 @@ export function useLauncherController(): LauncherController {
     argumentsMap: Record<string, CommandArgumentValue>,
     argv: string[] = [],
     closeLauncherOnSuccess = false,
+    restoreFocusOnSuccess = closeLauncherOnSuccess,
     optimisticSessionId?: string,
   ) {
     try {
@@ -276,7 +277,11 @@ export function useLauncherController(): LauncherController {
         void refreshThemePreference();
 
         try {
-          await hideLauncherAndRestoreFocus();
+          if (restoreFocusOnSuccess) {
+            await hideLauncherAndRestoreFocus();
+          } else {
+            await hideLauncher();
+          }
           resetLauncher();
         } catch (hideError) {
           setError(hideError instanceof Error ? hideError.message : String(hideError));
@@ -355,13 +360,20 @@ export function useLauncherController(): LauncherController {
           {},
           inlineExecution.argv,
           false,
+          false,
           optimisticSession.session_id,
         );
       });
       return;
     }
 
-    await executeCommand(result.id, {}, inlineExecution.argv, result.close_launcher_on_success);
+    await executeCommand(
+      result.id,
+      {},
+      inlineExecution.argv,
+      result.close_launcher_on_success,
+      shouldRestoreFocusAfterSuccess(result),
+    );
   }
 
   async function executeSelectedCommand() {
@@ -471,6 +483,7 @@ export function useLauncherController(): LauncherController {
       step.argumentsMap,
       [],
       activePendingExecution.closeLauncherOnSuccess,
+      true,
     );
   }
 
@@ -765,6 +778,10 @@ function getLauncherInputMode(query: string): LauncherInputMode {
 
 function normalizeBrowserTabQuery(query: string): string {
   return query.slice(1).trim();
+}
+
+function shouldRestoreFocusAfterSuccess(result: SearchResult): boolean {
+  return result.kind !== "browser_tab" && result.kind !== "open_window";
 }
 
 async function resolveLauncherSearch(query: string): Promise<{

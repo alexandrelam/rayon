@@ -277,6 +277,70 @@ describe("App", () => {
     expect(input.getAttribute("placeholder")).toBe("Search open windows and tabs");
   });
 
+  it("hides the launcher without restoring focus after selecting a browser tab", async () => {
+    vi.mocked(launcherApi.searchBrowserTabs).mockResolvedValue([
+      searchResult({
+        id: "browser-tab:chrome:window-1:1",
+        title: "Issue 15",
+        subtitle: "github.com",
+        kind: "browser_tab",
+        close_launcher_on_success: true,
+      }),
+    ]);
+
+    render(<App />);
+
+    const input = screen.getByLabelText("Command search");
+    fireEvent.change(input, { target: { value: " issue" } });
+
+    expect(await screen.findByText("Issue 15")).toBeTruthy();
+    await userEvent.keyboard("{Enter}");
+
+    await waitFor(() => {
+      expect(launcherApi.executeLauncherCommand).toHaveBeenCalledWith(
+        "browser-tab:chrome:window-1:1",
+        {},
+        [],
+      );
+    });
+    await waitFor(() => {
+      expect(launcherApi.hideLauncher).toHaveBeenCalled();
+    });
+    expect(launcherApi.hideLauncherAndRestoreFocus).not.toHaveBeenCalled();
+  });
+
+  it("hides the launcher without restoring focus after selecting an open window", async () => {
+    vi.mocked(launcherApi.searchBrowserTabs).mockResolvedValue([
+      searchResult({
+        id: "open-window:4242:777:10:20:1440:900",
+        title: "Project Board",
+        subtitle: "Linear",
+        kind: "open_window",
+        close_launcher_on_success: true,
+      }),
+    ]);
+
+    render(<App />);
+
+    const input = screen.getByLabelText("Command search");
+    fireEvent.change(input, { target: { value: " project" } });
+
+    expect(await screen.findByText("Project Board")).toBeTruthy();
+    await userEvent.keyboard("{Enter}");
+
+    await waitFor(() => {
+      expect(launcherApi.executeLauncherCommand).toHaveBeenCalledWith(
+        "open-window:4242:777:10:20:1440:900",
+        {},
+        [],
+      );
+    });
+    await waitFor(() => {
+      expect(launcherApi.hideLauncher).toHaveBeenCalled();
+    });
+    expect(launcherApi.hideLauncherAndRestoreFocus).not.toHaveBeenCalled();
+  });
+
   it("refreshes browser tabs only when entering tab mode", async () => {
     vi.mocked(launcherApi.searchBrowserTabs).mockResolvedValue([
       searchResult({
