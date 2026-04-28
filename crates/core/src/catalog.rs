@@ -1,7 +1,7 @@
 use rayon_types::{
     BookmarkDefinition, BrowserTab, BrowserTabTarget, CommandId, CommandInputMode,
-    ImageAssetDefinition, InstalledApp, OpenWindow, OpenWindowTarget, ProcessMatch,
-    SearchIndexStats, SearchResult, SearchResultKind, SearchableItemDocument,
+    ImageAssetDefinition, InstalledApp, ProcessMatch, SearchIndexStats, SearchResult,
+    SearchResultKind, SearchableItemDocument,
 };
 use std::collections::HashMap;
 use std::path::Path;
@@ -13,8 +13,6 @@ pub trait AppPlatform: Send + Sync {
     fn copy_image_to_clipboard(&self, image_path: &Path) -> Result<(), String>;
     fn search_browser_tabs(&self, query: &str) -> Result<Vec<BrowserTab>, String>;
     fn focus_browser_tab(&self, target: &BrowserTabTarget) -> Result<(), String>;
-    fn list_open_windows(&self) -> Result<Vec<OpenWindow>, String>;
-    fn focus_open_window(&self, target: &OpenWindowTarget) -> Result<(), String>;
     fn search_processes(&self, query: &str) -> Result<Vec<ProcessMatch>, String>;
     fn terminate_process(&self, pid: u32) -> Result<(), String>;
 }

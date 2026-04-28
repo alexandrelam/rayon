@@ -1,14 +1,10 @@
 use crate::commands::APP_REINDEX_COMMAND_ID;
-use rayon_types::{
-    parse_browser_tab_command_id, parse_open_window_command_id, BrowserTabTarget, CommandId,
-    OpenWindowTarget,
-};
+use rayon_types::{parse_browser_tab_command_id, BrowserTabTarget, CommandId};
 
 pub(super) enum ExecutionTarget {
     Reindex,
     App(CommandId),
     BrowserTab(BrowserTabTarget),
-    OpenWindow(OpenWindowTarget),
     Bookmark(CommandId),
     Image(CommandId),
     Provider(CommandId),
@@ -29,10 +25,6 @@ pub(super) fn resolve_execution_target(
 
     if let Some(target) = parse_browser_tab_command_id(command_id) {
         return ExecutionTarget::BrowserTab(target);
-    }
-
-    if let Some(target) = parse_open_window_command_id(command_id) {
-        return ExecutionTarget::OpenWindow(target);
     }
 
     if bookmark_exists {
