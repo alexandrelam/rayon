@@ -8,7 +8,8 @@ use rayon_types::{
     BookmarkDefinition, BrowserTab, BrowserTabTarget, CommandArgumentDefinition,
     CommandArgumentType, CommandDefinition, CommandExecutionRequest, CommandExecutionResult,
     CommandId, CommandInputMode, InstalledApp, InteractiveSessionCompletionBehavior,
-    InteractiveSessionMetadata, InteractiveSessionResult, ProcessMatch, SearchableItemDocument,
+    InteractiveSessionMetadata, InteractiveSessionResult, OpenWindow, OpenWindowTarget,
+    ProcessMatch, SearchableItemDocument,
 };
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -181,6 +182,8 @@ pub(crate) struct StubPlatform {
     pub copied_images: Mutex<Vec<String>>,
     pub browser_tabs: Mutex<Vec<BrowserTab>>,
     pub focused_browser_tabs: Mutex<Vec<BrowserTabTarget>>,
+    pub open_windows: Mutex<Vec<OpenWindow>>,
+    pub focused_open_windows: Mutex<Vec<OpenWindowTarget>>,
     pub process_search_results: Mutex<Vec<ProcessMatch>>,
     pub terminated_pids: Mutex<Vec<u32>>,
 }
@@ -222,6 +225,18 @@ impl AppPlatform for StubPlatform {
 
     fn focus_browser_tab(&self, target: &BrowserTabTarget) -> Result<(), String> {
         self.focused_browser_tabs
+            .lock()
+            .unwrap()
+            .push(target.clone());
+        Ok(())
+    }
+
+    fn list_open_windows(&self) -> Result<Vec<OpenWindow>, String> {
+        Ok(self.open_windows.lock().unwrap().clone())
+    }
+
+    fn focus_open_window(&self, target: &OpenWindowTarget) -> Result<(), String> {
+        self.focused_open_windows
             .lock()
             .unwrap()
             .push(target.clone());
@@ -279,6 +294,8 @@ pub(crate) fn build_launcher_service(search_results: Vec<String>) -> LauncherSer
         copied_images: Mutex::new(Vec::new()),
         browser_tabs: Mutex::new(Vec::new()),
         focused_browser_tabs: Mutex::new(Vec::new()),
+        open_windows: Mutex::new(Vec::new()),
+        focused_open_windows: Mutex::new(Vec::new()),
         process_search_results: Mutex::new(Vec::new()),
         terminated_pids: Mutex::new(Vec::new()),
     });

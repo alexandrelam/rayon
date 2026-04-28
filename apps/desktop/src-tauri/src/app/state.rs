@@ -4,13 +4,14 @@ use rayon_features::{ClipboardHistoryService, ThemeSettingsStore};
 use rayon_types::{
     BrowserTab, CommandExecutionRequest, CommandExecutionResult, CommandInvocationResult,
     InteractiveSessionQueryRequest, InteractiveSessionState, InteractiveSessionSubmitRequest,
-    InteractiveSessionSubmitResult, SearchResult, SearchResultKind, SearchableItemDocument,
+    InteractiveSessionSubmitResult, OpenWindow, SearchResult, SearchResultKind,
+    SearchableItemDocument,
 };
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use tauri::AppHandle;
 
-const BROWSER_TAB_SEARCH_LIMIT: usize = 20;
+const LEADING_SPACE_SEARCH_LIMIT: usize = 20;
 
 pub struct AppState {
     launcher: RwLock<LauncherService>,
@@ -18,7 +19,7 @@ pub struct AppState {
     search_index: Arc<dyn SearchIndex>,
     clipboard_history: Arc<ClipboardHistoryService>,
     theme_settings: Arc<ThemeSettingsStore>,
-    browser_tab_search_cache: Mutex<BrowserTabSearchCache>,
+    leading_space_search_cache: Mutex<LeadingSpaceSearchCache>,
 }
 
 impl AppState {
@@ -49,7 +50,7 @@ impl AppState {
             search_index: app_index,
             clipboard_history,
             theme_settings,
-            browser_tab_search_cache: Mutex::new(BrowserTabSearchCache::new()?),
+            leading_space_search_cache: Mutex::new(LeadingSpaceSearchCache::new()?),
         })
     }
 
@@ -68,10 +69,10 @@ impl AppState {
     }
 
     pub fn search_browser_tabs(&self, query: &str, refresh: bool) -> Vec<SearchResult> {
-        match self.browser_tab_search_cache.lock() {
+        match self.leading_space_search_cache.lock() {
             Ok(mut cache) => cache.search(self.platform.as_ref(), query, refresh),
             Err(poisoned) => {
-                eprintln!("browser tab search cache lock poisoned");
+                eprintln!("leading-space search cache lock poisoned");
                 poisoned
                     .into_inner()
                     .search(self.platform.as_ref(), query, refresh)
@@ -135,18 +136,18 @@ impl AppState {
     }
 }
 
-struct BrowserTabSearchCache {
-    tabs_by_id: HashMap<String, BrowserTab>,
-    ordered_tab_ids: Vec<String>,
+struct LeadingSpaceSearchCache {
+    items_by_id: HashMap<String, LeadingSpaceItem>,
+    ordered_item_ids: Vec<String>,
     search_index: rayon_db::TantivySearchIndex,
     initialized: bool,
 }
 
-impl BrowserTabSearchCache {
+impl LeadingSpaceSearchCache {
     fn new() -> Result<Self, String> {
         Ok(Self {
-            tabs_by_id: HashMap::new(),
-            ordered_tab_ids: Vec::new(),
+            items_by_id: HashMap::new(),
+            ordered_item_ids: Vec::new(),
             search_index: rayon_db::TantivySearchIndex::create_in_memory()
                 .map_err(|error| error.to_string())?,
             initialized: false,
@@ -161,7 +162,7 @@ impl BrowserTabSearchCache {
     ) -> Vec<SearchResult> {
         if refresh || !self.initialized {
             if let Err(error) = self.refresh(platform) {
-                eprintln!("browser tab refresh failed: {error}");
+                eprintln!("leading-space refresh failed: {error}");
                 return Vec::new();
             }
         }
@@ -169,80 +170,156 @@ impl BrowserTabSearchCache {
         let normalized_query = query.trim();
         if normalized_query.is_empty() {
             return self
-                .ordered_tab_ids
+                .ordered_item_ids
                 .iter()
-                .take(BROWSER_TAB_SEARCH_LIMIT)
-                .filter_map(|tab_id| self.tabs_by_id.get(tab_id))
-                .cloned()
-                .map(browser_tab_search_result)
+                .take(LEADING_SPACE_SEARCH_LIMIT)
+                .filter_map(|item_id| self.items_by_id.get(item_id))
+                .map(LeadingSpaceItem::search_result)
                 .collect();
         }
 
         let item_ids = match self
             .search_index
-            .search_item_ids(normalized_query, BROWSER_TAB_SEARCH_LIMIT)
+            .search_item_ids(normalized_query, LEADING_SPACE_SEARCH_LIMIT)
         {
             Ok(item_ids) => item_ids,
             Err(error) => {
-                eprintln!("browser tab index search failed: {error}");
+                eprintln!("leading-space index search failed: {error}");
                 return Vec::new();
             }
         };
 
-        item_ids
+        let mut matches = item_ids
             .into_iter()
-            .filter_map(|item_id| self.tabs_by_id.get(&item_id))
-            .cloned()
-            .map(browser_tab_search_result)
-            .collect()
+            .enumerate()
+            .filter_map(|(index, item_id)| {
+                self.items_by_id
+                    .get(&item_id)
+                    .map(|item| (leading_space_sort_key(item, index), item.search_result()))
+            })
+            .collect::<Vec<_>>();
+        matches.sort_by(|left, right| left.0.cmp(&right.0));
+        matches.into_iter().map(|(_, result)| result).collect()
     }
 
     fn refresh(&mut self, platform: &dyn AppPlatform) -> Result<(), String> {
         let tabs = platform.search_browser_tabs("")?;
-        let documents = tabs
+        let windows = platform.list_open_windows()?;
+        let ordered_item_ids = windows
             .iter()
-            .map(|tab| SearchableItemDocument {
-                id: tab.command_id(),
-                kind: SearchResultKind::BrowserTab,
-                title: tab.title.clone(),
-                subtitle: Some(tab.subtitle()),
-                owner_plugin_id: None,
-                search_text: tab.search_text(),
-            })
+            .map(OpenWindow::command_id)
+            .chain(tabs.iter().map(BrowserTab::command_id))
+            .map(|id| id.to_string())
             .collect::<Vec<_>>();
+
+        let mut documents = windows
+            .iter()
+            .map(LeadingSpaceItem::window_search_document)
+            .collect::<Vec<_>>();
+        documents.extend(
+            tabs.iter()
+                .map(LeadingSpaceItem::tab_search_document)
+                .collect::<Vec<_>>(),
+        );
 
         self.search_index
             .replace_items(&documents)
             .map_err(|error| error.to_string())?;
 
-        self.tabs_by_id = tabs
-            .iter()
-            .cloned()
-            .map(|tab| (tab.command_id().to_string(), tab))
-            .collect();
-        self.ordered_tab_ids = tabs
+        self.items_by_id = windows
             .into_iter()
-            .map(|tab| tab.command_id().to_string())
+            .map(|window| {
+                let item = LeadingSpaceItem::OpenWindow(window);
+                (item.id().to_string(), item)
+            })
+            .chain(tabs.into_iter().map(|tab| {
+                let item = LeadingSpaceItem::BrowserTab(tab);
+                (item.id().to_string(), item)
+            }))
             .collect();
+
+        self.ordered_item_ids = ordered_item_ids;
         self.initialized = true;
         Ok(())
     }
 }
 
-fn browser_tab_search_result(tab: BrowserTab) -> SearchResult {
-    let subtitle = tab.subtitle();
-    SearchResult {
-        id: tab.command_id(),
-        title: tab.title,
-        subtitle: Some(subtitle),
-        icon_path: None,
-        kind: SearchResultKind::BrowserTab,
-        owner_plugin_id: None,
-        keywords: Vec::new(),
-        starts_interactive_session: false,
-        close_launcher_on_success: true,
-        input_mode: rayon_types::CommandInputMode::Structured,
-        arguments: Vec::new(),
+#[derive(Clone)]
+enum LeadingSpaceItem {
+    BrowserTab(BrowserTab),
+    OpenWindow(OpenWindow),
+}
+
+impl LeadingSpaceItem {
+    fn id(&self) -> rayon_types::CommandId {
+        match self {
+            Self::BrowserTab(tab) => tab.command_id(),
+            Self::OpenWindow(window) => window.command_id(),
+        }
+    }
+
+    fn search_result(&self) -> SearchResult {
+        match self {
+            Self::BrowserTab(tab) => SearchResult {
+                id: tab.command_id(),
+                title: tab.title.clone(),
+                subtitle: Some(tab.subtitle()),
+                icon_path: None,
+                kind: SearchResultKind::BrowserTab,
+                owner_plugin_id: None,
+                keywords: Vec::new(),
+                starts_interactive_session: false,
+                close_launcher_on_success: true,
+                input_mode: rayon_types::CommandInputMode::Structured,
+                arguments: Vec::new(),
+            },
+            Self::OpenWindow(window) => SearchResult {
+                id: window.command_id(),
+                title: window.display_title(),
+                subtitle: Some(window.subtitle()),
+                icon_path: None,
+                kind: SearchResultKind::OpenWindow,
+                owner_plugin_id: None,
+                keywords: Vec::new(),
+                starts_interactive_session: false,
+                close_launcher_on_success: true,
+                input_mode: rayon_types::CommandInputMode::Structured,
+                arguments: Vec::new(),
+            },
+        }
+    }
+
+    fn tab_search_document(tab: &BrowserTab) -> SearchableItemDocument {
+        SearchableItemDocument {
+            id: tab.command_id(),
+            kind: SearchResultKind::BrowserTab,
+            title: tab.title.clone(),
+            subtitle: Some(tab.subtitle()),
+            owner_plugin_id: None,
+            search_text: tab.search_text(),
+        }
+    }
+
+    fn window_search_document(window: &OpenWindow) -> SearchableItemDocument {
+        SearchableItemDocument {
+            id: window.command_id(),
+            kind: SearchResultKind::OpenWindow,
+            title: window.display_title(),
+            subtitle: Some(window.subtitle()),
+            owner_plugin_id: None,
+            search_text: window.search_text(),
+        }
+    }
+}
+
+fn leading_space_sort_key(item: &LeadingSpaceItem, original_index: usize) -> (u8, u8, usize) {
+    match item {
+        LeadingSpaceItem::OpenWindow(window) => {
+            (0, if window.is_frontmost { 0 } else { 1 }, original_index)
+        }
+        LeadingSpaceItem::BrowserTab(tab) => {
+            (1, if tab.is_active() { 0 } else { 1 }, original_index)
+        }
     }
 }
 
@@ -260,11 +337,14 @@ pub fn write_launcher(launcher: &RwLock<LauncherService>) -> RwLockWriteGuard<'_
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use rayon_types::{BrowserTabTarget, CommandId, InstalledApp, ProcessMatch};
+    use rayon_types::{
+        BrowserTabTarget, CommandId, InstalledApp, OpenWindow, OpenWindowTarget, ProcessMatch,
+    };
     use std::sync::Mutex;
 
     struct StubPlatform {
         browser_tabs: Mutex<Vec<BrowserTab>>,
+        open_windows: Mutex<Vec<OpenWindow>>,
         search_calls: Mutex<usize>,
     }
 
@@ -294,6 +374,15 @@ mod tests {
             Ok(())
         }
 
+        fn list_open_windows(&self) -> Result<Vec<OpenWindow>, String> {
+            *self.search_calls.lock().unwrap() += 1;
+            Ok(self.open_windows.lock().unwrap().clone())
+        }
+
+        fn focus_open_window(&self, _target: &OpenWindowTarget) -> Result<(), String> {
+            Ok(())
+        }
+
         fn search_processes(&self, _query: &str) -> Result<Vec<ProcessMatch>, String> {
             Ok(Vec::new())
         }
@@ -315,8 +404,22 @@ mod tests {
         }
     }
 
+    fn sample_window(title: &str, application: &str, pid: i32, frontmost: bool) -> OpenWindow {
+        OpenWindow {
+            application: application.into(),
+            pid,
+            window_number: pid * 100,
+            bounds_x: pid * 10,
+            bounds_y: pid * 10,
+            bounds_width: 1440,
+            bounds_height: 900,
+            title: title.into(),
+            is_frontmost: frontmost,
+        }
+    }
+
     #[test]
-    fn browser_tab_search_cache_refreshes_only_on_request() {
+    fn leading_space_search_cache_refreshes_only_on_request() {
         let platform = StubPlatform {
             browser_tabs: Mutex::new(vec![sample_tab(
                 "Issue 15",
@@ -324,61 +427,92 @@ mod tests {
                 1,
                 1,
             )]),
+            open_windows: Mutex::new(vec![sample_window("Rayon", "Arc", 101, true)]),
             search_calls: Mutex::new(0),
         };
-        let mut cache = BrowserTabSearchCache::new().unwrap();
+        let mut cache = LeadingSpaceSearchCache::new().unwrap();
 
         let first_results = cache.search(&platform, "issue", true);
         let second_results = cache.search(&platform, "rayon", false);
 
         assert_eq!(first_results.len(), 1);
-        assert_eq!(second_results.len(), 1);
-        assert_eq!(*platform.search_calls.lock().unwrap(), 1);
+        assert_eq!(second_results.len(), 2);
+        assert_eq!(*platform.search_calls.lock().unwrap(), 2);
     }
 
     #[test]
-    fn browser_tab_search_cache_replaces_stale_tabs_on_refresh() {
+    fn leading_space_search_cache_replaces_stale_items_on_refresh() {
         let platform = StubPlatform {
             browser_tabs: Mutex::new(vec![sample_tab("Old Tab", "https://old.example", 1, 1)]),
+            open_windows: Mutex::new(vec![sample_window("Old Window", "Arc", 202, true)]),
             search_calls: Mutex::new(0),
         };
-        let mut cache = BrowserTabSearchCache::new().unwrap();
+        let mut cache = LeadingSpaceSearchCache::new().unwrap();
 
         let old_results = cache.search(&platform, "old", true);
-        assert_eq!(old_results[0].title, "Old Tab");
+        assert_eq!(old_results.len(), 2);
 
         *platform.browser_tabs.lock().unwrap() =
             vec![sample_tab("Fresh Tab", "https://fresh.example/path", 1, 1)];
+        *platform.open_windows.lock().unwrap() =
+            vec![sample_window("Fresh Window", "Finder", 303, true)];
 
         let stale_results = cache.search(&platform, "fresh", false);
         assert!(stale_results.is_empty());
 
         let fresh_results = cache.search(&platform, "fresh", true);
-        assert_eq!(fresh_results[0].title, "Fresh Tab");
-        assert_eq!(*platform.search_calls.lock().unwrap(), 2);
+        assert_eq!(fresh_results.len(), 2);
+        assert_eq!(*platform.search_calls.lock().unwrap(), 4);
     }
 
     #[test]
-    fn browser_tab_search_cache_returns_all_tabs_for_blank_query() {
+    fn leading_space_search_cache_returns_windows_then_tabs_for_blank_query() {
         let platform = StubPlatform {
             browser_tabs: Mutex::new(vec![
                 sample_tab("Current", "https://current.example", 1, 1),
                 sample_tab("Other", "https://other.example", 2, 1),
             ]),
+            open_windows: Mutex::new(vec![
+                sample_window("Project", "Arc", 404, true),
+                sample_window("Notes", "Obsidian", 505, false),
+            ]),
             search_calls: Mutex::new(0),
         };
-        let mut cache = BrowserTabSearchCache::new().unwrap();
+        let mut cache = LeadingSpaceSearchCache::new().unwrap();
 
         let results = cache.search(&platform, "", true);
 
-        assert_eq!(results.len(), 2);
+        assert_eq!(results.len(), 4);
+        assert_eq!(results[0].kind, SearchResultKind::OpenWindow);
         assert_eq!(
             results[0].id,
+            CommandId::from("open-window:404:40400:4040:4040:1440:900")
+        );
+        assert_eq!(results[2].kind, SearchResultKind::BrowserTab);
+        assert_eq!(
+            results[2].id,
             CommandId::from("browser-tab:chrome:window-1:1")
         );
-        assert_eq!(
-            results[1].id,
-            CommandId::from("browser-tab:chrome:window-2:1")
-        );
+    }
+
+    #[test]
+    fn leading_space_search_prioritizes_windows_over_tabs_for_matching_queries() {
+        let platform = StubPlatform {
+            browser_tabs: Mutex::new(vec![sample_tab(
+                "Project Docs",
+                "https://example.com/docs",
+                1,
+                1,
+            )]),
+            open_windows: Mutex::new(vec![sample_window("Project Board", "Linear", 606, true)]),
+            search_calls: Mutex::new(0),
+        };
+        let mut cache = LeadingSpaceSearchCache::new().unwrap();
+
+        let results = cache.search(&platform, "project", true);
+
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].kind, SearchResultKind::OpenWindow);
+        assert_eq!(results[1].kind, SearchResultKind::BrowserTab);
     }
 }

@@ -16,7 +16,7 @@ export type SearchResult = {
   title: string;
   subtitle: string | null;
   icon_path: string | null;
-  kind: "command" | "application" | "bookmark" | "image" | "browser_tab";
+  kind: "command" | "application" | "bookmark" | "image" | "browser_tab" | "open_window";
   owner_plugin_id: string | null;
   keywords: string[];
   starts_interactive_session: boolean;

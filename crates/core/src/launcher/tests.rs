@@ -10,7 +10,7 @@ use rayon_types::{
     CommandId, CommandInputMode, CommandInvocationResult, ImageAssetDefinition,
     InteractiveSessionCompletionBehavior, InteractiveSessionMetadata,
     InteractiveSessionQueryRequest, InteractiveSessionResult, InteractiveSessionSubmitRequest,
-    InteractiveSessionSubmitResult, SearchResultKind,
+    InteractiveSessionSubmitResult, OpenWindow, OpenWindowTarget, SearchResultKind,
 };
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -90,6 +90,8 @@ fn aggregate_search_does_not_include_browser_tabs() {
             url: "https://example.com/arc".into(),
         }]),
         focused_browser_tabs: Mutex::new(Vec::new()),
+        open_windows: Mutex::new(Vec::new()),
+        focused_open_windows: Mutex::new(Vec::new()),
         process_search_results: Mutex::new(Vec::new()),
         terminated_pids: Mutex::new(Vec::new()),
     });
@@ -182,6 +184,8 @@ fn execute_routes_browser_tab_ids_to_platform_focus() {
             url: "https://github.com/alexandrelam/rayon/issues/15".into(),
         }]),
         focused_browser_tabs: Mutex::new(Vec::new()),
+        open_windows: Mutex::new(Vec::new()),
+        focused_open_windows: Mutex::new(Vec::new()),
         process_search_results: Mutex::new(Vec::new()),
         terminated_pids: Mutex::new(Vec::new()),
     });
@@ -209,6 +213,62 @@ fn execute_routes_browser_tab_ids_to_platform_focus() {
             browser: "chrome".into(),
             window_id: "window-1".into(),
             tab_index: 4,
+        }
+    );
+}
+
+#[allow(clippy::unwrap_used)]
+#[test]
+fn execute_routes_open_window_ids_to_platform_focus() {
+    let platform = Arc::new(StubPlatform {
+        apps: Vec::new(),
+        launched: Mutex::new(Vec::new()),
+        opened_urls: Mutex::new(Vec::new()),
+        copied_images: Mutex::new(Vec::new()),
+        browser_tabs: Mutex::new(Vec::new()),
+        focused_browser_tabs: Mutex::new(Vec::new()),
+        open_windows: Mutex::new(vec![OpenWindow {
+            application: "Arc".into(),
+            pid: 4242,
+            window_number: 777,
+            bounds_x: 10,
+            bounds_y: 20,
+            bounds_width: 1440,
+            bounds_height: 900,
+            title: "Rayon".into(),
+            is_frontmost: true,
+        }]),
+        focused_open_windows: Mutex::new(Vec::new()),
+        process_search_results: Mutex::new(Vec::new()),
+        terminated_pids: Mutex::new(Vec::new()),
+    });
+    let launcher = launcher_with_platform(platform.clone(), vec![]);
+
+    let result = launcher
+        .execute_command(&CommandExecutionRequest {
+            command_id: CommandId::from("open-window:4242:777:10:20:1440:900"),
+            argv: Vec::new(),
+            arguments: HashMap::new(),
+        })
+        .unwrap();
+
+    assert_eq!(
+        result,
+        CommandInvocationResult::Completed {
+            output: "focused window".into()
+        }
+    );
+
+    let focused = &platform.focused_open_windows.lock().unwrap()[0];
+    assert_eq!(
+        focused,
+        &OpenWindowTarget {
+            pid: 4242,
+            window_number: Some(777),
+            bounds_x: 10,
+            bounds_y: 20,
+            bounds_width: 1440,
+            bounds_height: 900,
         }
     );
 }
@@ -307,6 +367,8 @@ fn completed_interactive_submit_removes_active_session() {
         copied_images: Mutex::new(Vec::new()),
         browser_tabs: Mutex::new(Vec::new()),
         focused_browser_tabs: Mutex::new(Vec::new()),
+        open_windows: Mutex::new(Vec::new()),
+        focused_open_windows: Mutex::new(Vec::new()),
         process_search_results: Mutex::new(Vec::new()),
         terminated_pids: Mutex::new(Vec::new()),
     });
@@ -452,6 +514,8 @@ fn completed_interactive_submit_calls_provider_cleanup() {
         copied_images: Mutex::new(Vec::new()),
         browser_tabs: Mutex::new(Vec::new()),
         focused_browser_tabs: Mutex::new(Vec::new()),
+        open_windows: Mutex::new(Vec::new()),
+        focused_open_windows: Mutex::new(Vec::new()),
         process_search_results: Mutex::new(Vec::new()),
         terminated_pids: Mutex::new(Vec::new()),
     });
@@ -508,6 +572,8 @@ fn startup_reindexes_commands_and_apps() {
         copied_images: Mutex::new(Vec::new()),
         browser_tabs: Mutex::new(Vec::new()),
         focused_browser_tabs: Mutex::new(Vec::new()),
+        open_windows: Mutex::new(Vec::new()),
+        focused_open_windows: Mutex::new(Vec::new()),
         process_search_results: Mutex::new(Vec::new()),
         terminated_pids: Mutex::new(Vec::new()),
     });
@@ -577,6 +643,8 @@ fn aggregate_search_includes_images() {
         copied_images: Mutex::new(Vec::new()),
         browser_tabs: Mutex::new(Vec::new()),
         focused_browser_tabs: Mutex::new(Vec::new()),
+        open_windows: Mutex::new(Vec::new()),
+        focused_open_windows: Mutex::new(Vec::new()),
         process_search_results: Mutex::new(Vec::new()),
         terminated_pids: Mutex::new(Vec::new()),
     });
@@ -618,6 +686,8 @@ fn execute_routes_image_ids_to_clipboard_copy() {
         copied_images: Mutex::new(Vec::new()),
         browser_tabs: Mutex::new(Vec::new()),
         focused_browser_tabs: Mutex::new(Vec::new()),
+        open_windows: Mutex::new(Vec::new()),
+        focused_open_windows: Mutex::new(Vec::new()),
         process_search_results: Mutex::new(Vec::new()),
         terminated_pids: Mutex::new(Vec::new()),
     });

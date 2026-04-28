@@ -265,6 +265,7 @@ fn search_kind(kind: SearchResultKind) -> &'static str {
         SearchResultKind::Bookmark => "bookmark",
         SearchResultKind::Image => "image",
         SearchResultKind::BrowserTab => "browser_tab",
+        SearchResultKind::OpenWindow => "open_window",
     }
 }
 
