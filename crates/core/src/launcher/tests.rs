@@ -230,6 +230,7 @@ fn execute_routes_open_window_ids_to_platform_focus() {
         open_windows: Mutex::new(vec![OpenWindow {
             application: "Arc".into(),
             pid: 4242,
+            window_number: 777,
             bounds_x: 10,
             bounds_y: 20,
             bounds_width: 1440,
@@ -245,7 +246,7 @@ fn execute_routes_open_window_ids_to_platform_focus() {
 
     let result = launcher
         .execute_command(&CommandExecutionRequest {
-            command_id: CommandId::from("open-window:4242:10:20:1440:900"),
+            command_id: CommandId::from("open-window:4242:777:10:20:1440:900"),
             argv: Vec::new(),
             arguments: HashMap::new(),
         })
@@ -263,6 +264,7 @@ fn execute_routes_open_window_ids_to_platform_focus() {
         focused,
         &OpenWindowTarget {
             pid: 4242,
+            window_number: Some(777),
             bounds_x: 10,
             bounds_y: 20,
             bounds_width: 1440,

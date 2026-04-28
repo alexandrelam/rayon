@@ -239,7 +239,7 @@ describe("App", () => {
   it("renders leading-space window results with the window badge", async () => {
     vi.mocked(launcherApi.searchBrowserTabs).mockResolvedValue([
       searchResult({
-        id: "open-window:4242:10:20:1440:900",
+        id: "open-window:4242:777:10:20:1440:900",
         title: "Project Board",
         subtitle: "Linear",
         kind: "open_window",

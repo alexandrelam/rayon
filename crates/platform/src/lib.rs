@@ -59,8 +59,6 @@ const K_CF_STRING_ENCODING_UTF8: u32 = 0x0800_0100;
 #[cfg(target_os = "macos")]
 const K_CF_NUMBER_SINT32_TYPE: i32 = 3;
 #[cfg(target_os = "macos")]
-const K_CG_WINDOW_LIST_OPTION_ON_SCREEN_ONLY: u32 = 1 << 0;
-#[cfg(target_os = "macos")]
 const K_CG_WINDOW_LIST_EXCLUDE_DESKTOP_ELEMENTS: u32 = 1 << 4;
 
 #[cfg(target_os = "macos")]
@@ -69,6 +67,7 @@ extern "C" {
     static kCGWindowOwnerPID: CFStringRef;
     static kCGWindowOwnerName: CFStringRef;
     static kCGWindowName: CFStringRef;
+    static kCGWindowNumber: CFStringRef;
     static kCGWindowBounds: CFStringRef;
     static kCGWindowLayer: CFStringRef;
 
@@ -206,11 +205,8 @@ impl MacOsAppManager {
         #[cfg(target_os = "macos")]
         {
             let window_list = unsafe {
-                CGWindowListCopyWindowInfo(
-                    K_CG_WINDOW_LIST_OPTION_ON_SCREEN_ONLY
-                        | K_CG_WINDOW_LIST_EXCLUDE_DESKTOP_ELEMENTS,
-                    0,
-                )
+                // Use the full window list so windows from other Spaces are indexed too.
+                CGWindowListCopyWindowInfo(K_CG_WINDOW_LIST_EXCLUDE_DESKTOP_ELEMENTS, 0)
             };
             if window_list.is_null() {
                 return Err("failed to list open windows".into());
@@ -612,6 +608,11 @@ fn parse_open_window(dictionary: CFDictionaryRef) -> Option<OpenWindow> {
         return None;
     }
 
+    let window_number = cf_dictionary_i32(dictionary, unsafe { kCGWindowNumber })?;
+    if window_number <= 0 {
+        return None;
+    }
+
     let application = cf_dictionary_string(dictionary, unsafe { kCGWindowOwnerName })?;
     if application.is_empty() || application == "Rayon" {
         return None;
@@ -634,6 +635,7 @@ fn parse_open_window(dictionary: CFDictionaryRef) -> Option<OpenWindow> {
     Some(OpenWindow {
         application,
         pid,
+        window_number,
         bounds_x,
         bounds_y,
         bounds_width,
@@ -717,6 +719,7 @@ fn cf_string_to_string(value: CFStringRef) -> Option<String> {
 
 fn focus_open_window_script(target: &OpenWindowTarget) -> String {
     let pid = target.pid;
+    let window_number = target.window_number.unwrap_or_default();
     let x = target.bounds_x;
     let y = target.bounds_y;
     let width = target.bounds_width;
@@ -727,19 +730,36 @@ fn focus_open_window_script(target: &OpenWindowTarget) -> String {
         r#"
 tell application "System Events"
     if UI elements enabled is false then
-        error "Rayon needs Accessibility access to focus windows"
+        error "Rayon needs Accessibility access to focus windows across Spaces"
     end if
 
     if not (exists first application process whose unix id is {pid}) then
         error "Window application is no longer running"
     end if
 
+    set targetProcess to first application process whose unix id is {pid}
+    set targetAppName to name of targetProcess
+end tell
+
+tell application targetAppName
+    activate
+end tell
+
+delay 0.05
+
+tell application "System Events"
     tell first application process whose unix id is {pid}
         set frontmost to true
         repeat with w in windows
             set windowPosition to position of w
             set windowSize to size of w
-            if (abs((item 1 of windowPosition) - {x}) <= {tolerance}) and (abs((item 2 of windowPosition) - {y}) <= {tolerance}) and (abs((item 1 of windowSize) - {width}) <= {tolerance}) and (abs((item 2 of windowSize) - {height}) <= {tolerance}) then
+            set titleMatches to false
+            try
+                if value of attribute "AXWindowNumber" of w is {window_number} then
+                    set titleMatches to true
+                end if
+            end try
+            if titleMatches or ((abs((item 1 of windowPosition) - {x}) <= {tolerance}) and (abs((item 2 of windowPosition) - {y}) <= {tolerance}) and (abs((item 1 of windowSize) - {width}) <= {tolerance}) and (abs((item 2 of windowSize) - {height}) <= {tolerance})) then
                 perform action "AXRaise" of w
                 set value of attribute "AXMain" of w to true
                 return "ok"
@@ -1132,5 +1152,22 @@ mod tests {
         assert_eq!(matches.len(), 2);
         assert_eq!(matches[0].title, "Second");
         assert_eq!(matches[1].title, "First");
+    }
+
+    #[test]
+    fn open_window_focus_script_activates_app_and_prefers_window_number() {
+        let script = focus_open_window_script(&OpenWindowTarget {
+            pid: 4242,
+            window_number: Some(777),
+            bounds_x: 10,
+            bounds_y: 20,
+            bounds_width: 1440,
+            bounds_height: 900,
+        });
+
+        assert!(script.contains("tell application targetAppName"));
+        assert!(script.contains("activate"));
+        assert!(script.contains("AXWindowNumber"));
+        assert!(script.contains("is 777"));
     }
 }

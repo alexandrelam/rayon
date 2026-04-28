@@ -339,6 +339,7 @@ pub fn parse_browser_tab_command_id(command_id: &CommandId) -> Option<BrowserTab
 pub struct OpenWindow {
     pub application: String,
     pub pid: i32,
+    pub window_number: i32,
     pub bounds_x: i32,
     pub bounds_y: i32,
     pub bounds_width: i32,
@@ -350,8 +351,13 @@ pub struct OpenWindow {
 impl OpenWindow {
     pub fn command_id(&self) -> CommandId {
         CommandId::from(format!(
-            "{OPEN_WINDOW_COMMAND_PREFIX}:{}:{}:{}:{}:{}",
-            self.pid, self.bounds_x, self.bounds_y, self.bounds_width, self.bounds_height
+            "{OPEN_WINDOW_COMMAND_PREFIX}:{}:{}:{}:{}:{}:{}",
+            self.pid,
+            self.window_number,
+            self.bounds_x,
+            self.bounds_y,
+            self.bounds_width,
+            self.bounds_height
         ))
     }
 
@@ -379,6 +385,7 @@ impl OpenWindow {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpenWindowTarget {
     pub pid: i32,
+    pub window_number: Option<i32>,
     pub bounds_x: i32,
     pub bounds_y: i32,
     pub bounds_width: i32,
@@ -389,22 +396,32 @@ pub fn parse_open_window_command_id(command_id: &CommandId) -> Option<OpenWindow
     let mut parts = command_id.as_str().split(':');
     let prefix = parts.next()?;
     let pid = parts.next()?.parse::<i32>().ok()?;
-    let bounds_x = parts.next()?.parse::<i32>().ok()?;
-    let bounds_y = parts.next()?.parse::<i32>().ok()?;
-    let bounds_width = parts.next()?.parse::<i32>().ok()?;
-    let bounds_height = parts.next()?.parse::<i32>().ok()?;
-
-    if prefix != OPEN_WINDOW_COMMAND_PREFIX || parts.next().is_some() {
+    if prefix != OPEN_WINDOW_COMMAND_PREFIX {
         return None;
     }
 
-    Some(OpenWindowTarget {
-        pid,
-        bounds_x,
-        bounds_y,
-        bounds_width,
-        bounds_height,
-    })
+    let remaining_parts = parts.collect::<Vec<_>>();
+    match remaining_parts.as_slice() {
+        [window_number, bounds_x, bounds_y, bounds_width, bounds_height] => {
+            Some(OpenWindowTarget {
+                pid,
+                window_number: window_number.parse::<i32>().ok(),
+                bounds_x: bounds_x.parse::<i32>().ok()?,
+                bounds_y: bounds_y.parse::<i32>().ok()?,
+                bounds_width: bounds_width.parse::<i32>().ok()?,
+                bounds_height: bounds_height.parse::<i32>().ok()?,
+            })
+        }
+        [bounds_x, bounds_y, bounds_width, bounds_height] => Some(OpenWindowTarget {
+            pid,
+            window_number: None,
+            bounds_x: bounds_x.parse::<i32>().ok()?,
+            bounds_y: bounds_y.parse::<i32>().ok()?,
+            bounds_width: bounds_width.parse::<i32>().ok()?,
+            bounds_height: bounds_height.parse::<i32>().ok()?,
+        }),
+        _ => None,
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -463,4 +480,51 @@ pub struct ProcessMatch {
     pub executable_name: String,
     pub command: String,
     pub matched_ports: Vec<u16>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn open_window_command_id_round_trips_with_window_number() {
+        let window = OpenWindow {
+            application: "Linear".into(),
+            pid: 4242,
+            window_number: 777,
+            bounds_x: 10,
+            bounds_y: 20,
+            bounds_width: 1440,
+            bounds_height: 900,
+            title: "Project Board".into(),
+            is_frontmost: true,
+        };
+
+        assert_eq!(
+            parse_open_window_command_id(&window.command_id()),
+            Some(OpenWindowTarget {
+                pid: 4242,
+                window_number: Some(777),
+                bounds_x: 10,
+                bounds_y: 20,
+                bounds_width: 1440,
+                bounds_height: 900,
+            })
+        );
+    }
+
+    #[test]
+    fn open_window_command_id_still_parses_legacy_format() {
+        assert_eq!(
+            parse_open_window_command_id(&CommandId::from("open-window:4242:10:20:1440:900")),
+            Some(OpenWindowTarget {
+                pid: 4242,
+                window_number: None,
+                bounds_x: 10,
+                bounds_y: 20,
+                bounds_width: 1440,
+                bounds_height: 900,
+            })
+        );
+    }
 }

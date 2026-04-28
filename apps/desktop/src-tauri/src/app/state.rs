@@ -408,6 +408,7 @@ mod tests {
         OpenWindow {
             application: application.into(),
             pid,
+            window_number: pid * 100,
             bounds_x: pid * 10,
             bounds_y: pid * 10,
             bounds_width: 1440,
@@ -485,7 +486,7 @@ mod tests {
         assert_eq!(results[0].kind, SearchResultKind::OpenWindow);
         assert_eq!(
             results[0].id,
-            CommandId::from("open-window:404:4040:4040:1440:900")
+            CommandId::from("open-window:404:40400:4040:4040:1440:900")
         );
         assert_eq!(results[2].kind, SearchResultKind::BrowserTab);
         assert_eq!(
