@@ -167,14 +167,6 @@ impl MacOsAppManager {
             return Err(format!("unsupported browser target: {}", target.browser));
         }
 
-        let status = Command::new("/usr/bin/open")
-            .args(["-a", "Google Chrome"])
-            .status()
-            .map_err(|error| format!("failed to activate Google Chrome: {error}"))?;
-        if !status.success() {
-            return Err("failed to activate Google Chrome".to_string());
-        }
-
         let mut last_error = None;
         for attempt in 0..4 {
             let output = Command::new("/usr/bin/osascript")
@@ -738,14 +730,7 @@ tell application "System Events"
     end if
 
     set targetProcess to first application process whose unix id is {pid}
-    set targetAppName to name of targetProcess
 end tell
-
-tell application targetAppName
-    activate
-end tell
-
-delay 0.05
 
 tell application "System Events"
     tell first application process whose unix id is {pid}
@@ -1165,9 +1150,19 @@ mod tests {
             bounds_height: 900,
         });
 
-        assert!(script.contains("tell application targetAppName"));
-        assert!(script.contains("activate"));
+        assert!(script.contains("set frontmost to true"));
         assert!(script.contains("AXWindowNumber"));
         assert!(script.contains("is 777"));
+        assert!(!script.contains("tell application targetAppName"));
+        assert!(!script.contains("\n    activate\n"));
+    }
+
+    #[test]
+    fn chrome_focus_tab_script_uses_single_activation_path() {
+        let script = chrome_focus_tab_script("window-1", 2);
+
+        assert!(script.contains("set active tab index of targetWindow to 2"));
+        assert!(script.contains("\n    activate\n"));
+        assert!(!script.contains("/usr/bin/open"));
     }
 }
