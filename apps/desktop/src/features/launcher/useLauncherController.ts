@@ -729,13 +729,13 @@ export function useLauncherController(): LauncherController {
     inputRef,
     query,
     placeholder: activeArgument
-      ? activeArgument.argument_type === "boolean"
-        ? "true / false"
-        : activeArgument.label
+        ? activeArgument.argument_type === "boolean"
+          ? "true / false"
+          : activeArgument.label
       : interactiveSession
         ? interactiveSession.input_placeholder
         : inputMode === "browser_tabs"
-          ? "Search open windows and tabs"
+          ? "Search open Chrome tabs"
           : "Type a command",
     inputMode,
     onQueryChange,
@@ -781,7 +781,7 @@ function normalizeBrowserTabQuery(query: string): string {
 }
 
 function shouldRestoreFocusAfterSuccess(result: SearchResult): boolean {
-  return result.kind !== "browser_tab" && result.kind !== "open_window";
+  return result.kind !== "browser_tab";
 }
 
 async function resolveLauncherSearch(query: string): Promise<{

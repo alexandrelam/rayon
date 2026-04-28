@@ -2,8 +2,7 @@ use rayon_core::{AppPlatform, SearchIndex, SearchIndexStats};
 use rayon_db::TantivySearchIndex;
 use rayon_platform::MacOsAppManager;
 use rayon_types::{
-    BrowserTab, BrowserTabTarget, InstalledApp, OpenWindow, OpenWindowTarget, ProcessMatch,
-    SearchableItemDocument,
+    BrowserTab, BrowserTabTarget, InstalledApp, ProcessMatch, SearchableItemDocument,
 };
 
 pub(super) struct DesktopPlatform {
@@ -41,14 +40,6 @@ impl AppPlatform for DesktopPlatform {
 
     fn focus_browser_tab(&self, target: &BrowserTabTarget) -> Result<(), String> {
         self.inner.focus_browser_tab(target)
-    }
-
-    fn list_open_windows(&self) -> Result<Vec<OpenWindow>, String> {
-        self.inner.list_open_windows()
-    }
-
-    fn focus_open_window(&self, target: &OpenWindowTarget) -> Result<(), String> {
-        self.inner.focus_open_window(target)
     }
 
     fn search_processes(&self, query: &str) -> Result<Vec<ProcessMatch>, String> {

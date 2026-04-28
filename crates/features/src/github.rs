@@ -349,14 +349,6 @@ mod tests {
             Ok(())
         }
 
-        fn list_open_windows(&self) -> Result<Vec<rayon_types::OpenWindow>, String> {
-            Ok(Vec::new())
-        }
-
-        fn focus_open_window(&self, _target: &rayon_types::OpenWindowTarget) -> Result<(), String> {
-            Ok(())
-        }
-
         fn search_processes(&self, _query: &str) -> Result<Vec<ProcessMatch>, String> {
             Ok(Vec::new())
         }

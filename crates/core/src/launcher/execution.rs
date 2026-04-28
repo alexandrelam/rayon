@@ -36,12 +36,6 @@ impl LauncherService {
                     output: result.output,
                 })
             }
-            ExecutionTarget::OpenWindow(target) => {
-                let result = self.focus_open_window(&target)?;
-                Ok(CommandInvocationResult::Completed {
-                    output: result.output,
-                })
-            }
             ExecutionTarget::Bookmark(bookmark_id) => {
                 let result = self.open_bookmark(&bookmark_id)?;
                 Ok(CommandInvocationResult::Completed {
@@ -138,19 +132,6 @@ impl LauncherService {
 
         Ok(CommandExecutionResult {
             output: "focused Chrome tab".into(),
-        })
-    }
-
-    fn focus_open_window(
-        &self,
-        target: &rayon_types::OpenWindowTarget,
-    ) -> Result<CommandExecutionResult, LauncherError> {
-        self.platform
-            .focus_open_window(target)
-            .map_err(LauncherError::Platform)?;
-
-        Ok(CommandExecutionResult {
-            output: "focused window".into(),
         })
     }
 
