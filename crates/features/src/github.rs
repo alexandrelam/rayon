@@ -5,7 +5,8 @@ use rayon_types::{
     InteractiveSessionResult,
 };
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex};
 
@@ -14,56 +15,102 @@ const GITHUB_MY_PRS_COMMAND_ID: &str = "github.my-prs";
 pub struct GitHubMyPrsProvider {
     platform: Arc<dyn AppPlatform>,
     cli: Arc<dyn GitHubCli>,
-    session_prs: Mutex<HashMap<String, Vec<GitHubPullRequest>>>,
+    cache: Arc<Mutex<GitHubPrCache>>,
+    refresh_scheduler: Arc<dyn RefreshScheduler>,
 }
 
 impl GitHubMyPrsProvider {
     pub fn new(platform: Arc<dyn AppPlatform>) -> Self {
-        Self::with_cli(platform, Arc::new(SystemGitHubCli))
+        Self::with_dependencies(
+            platform,
+            Arc::new(SystemGitHubCli),
+            Arc::new(ThreadRefreshScheduler),
+        )
     }
 
+    #[cfg(test)]
     fn with_cli(platform: Arc<dyn AppPlatform>, cli: Arc<dyn GitHubCli>) -> Self {
+        Self::with_dependencies(platform, cli, Arc::new(ThreadRefreshScheduler))
+    }
+
+    fn with_dependencies(
+        platform: Arc<dyn AppPlatform>,
+        cli: Arc<dyn GitHubCli>,
+        refresh_scheduler: Arc<dyn RefreshScheduler>,
+    ) -> Self {
         Self {
             platform,
             cli,
-            session_prs: Mutex::new(HashMap::new()),
+            cache: Arc::new(Mutex::new(GitHubPrCache::default())),
+            refresh_scheduler,
         }
+    }
+
+    fn cached_prs(&self) -> Result<Option<Vec<GitHubPullRequest>>, CommandError> {
+        let cache = self
+            .cache
+            .lock()
+            .map_err(|_| CommandError::ExecutionFailed("GitHub PR cache lock poisoned".into()))?;
+        Ok(cache.prs.clone())
     }
 
     fn session_prs(
         &self,
-        session: &InteractiveSessionMetadata,
+        _session: &InteractiveSessionMetadata,
     ) -> Result<Vec<GitHubPullRequest>, CommandError> {
-        let session_prs = self
-            .session_prs
-            .lock()
-            .map_err(|_| CommandError::ExecutionFailed("GitHub PR cache lock poisoned".into()))?;
-
-        if let Some(prs) = session_prs.get(&session.session_id) {
-            return Ok(prs.clone());
+        if let Some(prs) = self.cached_prs()? {
+            self.schedule_refresh_if_needed()?;
+            return Ok(prs);
         }
-        drop(session_prs);
 
         let prs = self
             .cli
             .search_my_open_prs()
             .map_err(CommandError::ExecutionFailed)?;
-
-        let mut session_prs = self
-            .session_prs
+        let mut cache = self
+            .cache
             .lock()
             .map_err(|_| CommandError::ExecutionFailed("GitHub PR cache lock poisoned".into()))?;
-        if let Some(cached_prs) = session_prs.get(&session.session_id) {
-            return Ok(cached_prs.clone());
-        }
-        session_prs.insert(session.session_id.clone(), prs.clone());
+        cache.prs = Some(prs.clone());
+        cache.last_refresh_error = None;
         Ok(prs)
     }
 
-    fn clear_session(&self, session_id: &str) {
-        if let Ok(mut session_prs) = self.session_prs.lock() {
-            session_prs.remove(session_id);
+    fn schedule_refresh_if_needed(&self) -> Result<(), CommandError> {
+        let mut cache = self
+            .cache
+            .lock()
+            .map_err(|_| CommandError::ExecutionFailed("GitHub PR cache lock poisoned".into()))?;
+        if cache.refresh_in_flight {
+            return Ok(());
         }
+
+        cache.refresh_in_flight = true;
+        drop(cache);
+
+        let cli = Arc::clone(&self.cli);
+        let cache = Arc::clone(&self.cache);
+        self.refresh_scheduler.schedule(Box::new(move || {
+            let refresh_result = cli.search_my_open_prs();
+            match cache.lock() {
+                Ok(mut cache) => {
+                    if let Ok(prs) = refresh_result {
+                        cache.prs = Some(prs);
+                        cache.last_refresh_error = None;
+                    } else if let Err(error) = refresh_result {
+                        eprintln!("github pr refresh failed: {error}");
+                        cache.last_refresh_error = Some(error);
+                    }
+                    cache.refresh_in_flight = false;
+                }
+                Err(_) => {
+                    if let Err(error) = refresh_result {
+                        eprintln!("github pr refresh failed after cache lock poison: {error}");
+                    }
+                }
+            }
+        }));
+        Ok(())
     }
 }
 
@@ -153,13 +200,32 @@ impl CommandProvider for GitHubMyPrsProvider {
         ))
     }
 
-    fn end_interactive_session(&self, session: &InteractiveSessionMetadata) {
-        self.clear_session(&session.session_id);
-    }
+    fn end_interactive_session(&self, _session: &InteractiveSessionMetadata) {}
 }
 
 trait GitHubCli: Send + Sync {
     fn search_my_open_prs(&self) -> Result<Vec<GitHubPullRequest>, String>;
+}
+
+trait RefreshScheduler: Send + Sync {
+    fn schedule(&self, task: Box<dyn FnOnce() + Send>);
+}
+
+struct ThreadRefreshScheduler;
+
+impl RefreshScheduler for ThreadRefreshScheduler {
+    fn schedule(&self, task: Box<dyn FnOnce() + Send>) {
+        let _ = std::thread::Builder::new()
+            .name("github-pr-refresh".into())
+            .spawn(task);
+    }
+}
+
+#[derive(Default)]
+struct GitHubPrCache {
+    prs: Option<Vec<GitHubPullRequest>>,
+    refresh_in_flight: bool,
+    last_refresh_error: Option<String>,
 }
 
 struct SystemGitHubCli;
@@ -287,13 +353,91 @@ fn ensure_gh_authenticated() -> Result<(), String> {
 }
 
 fn run_gh(args: &[&str]) -> Result<std::process::Output, String> {
-    Command::new("gh").args(args).output().map_err(|error| {
+    let gh = resolve_gh_path()?;
+    Command::new(&gh).args(args).output().map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
-            "GitHub CLI (gh) is not installed or not on PATH.".into()
+            format!(
+                "GitHub CLI (gh) was resolved to {} but could not be executed.",
+                gh.display()
+            )
         } else {
             format!("failed to run gh: {error}")
         }
     })
+}
+
+fn resolve_gh_path() -> Result<PathBuf, String> {
+    if let Some(path) = find_program_in_current_path("gh") {
+        return Ok(path);
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(path) = find_program_in_paths("gh", macos_cli_search_paths()) {
+            return Ok(path);
+        }
+
+        if let Some(path) = resolve_program_via_login_shell("gh") {
+            return Ok(path);
+        }
+    }
+
+    Err("GitHub CLI (gh) is not installed or not available to Rayon. Install it with `brew install gh`, or make sure the app can access the directory that contains `gh`.".into())
+}
+
+fn find_program_in_current_path(program: &str) -> Option<PathBuf> {
+    std::env::var_os("PATH").and_then(|paths| find_program_in_path_list(program, &paths))
+}
+
+fn find_program_in_path_list(program: &str, paths: &OsString) -> Option<PathBuf> {
+    std::env::split_paths(paths)
+        .map(|directory| directory.join(program))
+        .find(|candidate| is_executable_file(candidate))
+}
+
+fn find_program_in_paths(
+    program: &str,
+    directories: impl IntoIterator<Item = PathBuf>,
+) -> Option<PathBuf> {
+    directories
+        .into_iter()
+        .map(|directory| directory.join(program))
+        .find(|candidate| is_executable_file(candidate))
+}
+
+fn is_executable_file(path: &Path) -> bool {
+    path.is_file()
+}
+
+#[cfg(target_os = "macos")]
+fn macos_cli_search_paths() -> Vec<PathBuf> {
+    vec![
+        PathBuf::from("/opt/homebrew/bin"),
+        PathBuf::from("/usr/local/bin"),
+        PathBuf::from("/opt/local/bin"),
+        PathBuf::from("/usr/bin"),
+    ]
+}
+
+#[cfg(target_os = "macos")]
+fn resolve_program_via_login_shell(program: &str) -> Option<PathBuf> {
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
+    let output = Command::new(shell)
+        .args(["-l", "-c", &format!("command -v {program}")])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let candidate = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if candidate.is_empty() {
+        return None;
+    }
+
+    let path = PathBuf::from(candidate);
+    is_executable_file(&path).then_some(path)
 }
 
 fn stderr_or_stdout(output: &std::process::Output) -> Option<String> {
@@ -317,6 +461,9 @@ mod tests {
     use rayon_core::InteractiveSessionSubmitOutcome;
     use rayon_types::{BrowserTab, BrowserTabTarget, CommandId, InstalledApp, ProcessMatch};
     use std::collections::VecDeque;
+    use std::fs;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Condvar;
 
     #[derive(Default)]
     struct StubPlatform {
@@ -360,23 +507,85 @@ mod tests {
 
     struct StubGitHubCli {
         responses: Mutex<VecDeque<Result<Vec<GitHubPullRequest>, String>>>,
+        call_count: AtomicUsize,
     }
 
     impl StubGitHubCli {
         fn new(responses: Vec<Result<Vec<GitHubPullRequest>, String>>) -> Self {
             Self {
                 responses: Mutex::new(responses.into()),
+                call_count: AtomicUsize::new(0),
             }
+        }
+
+        fn call_count(&self) -> usize {
+            self.call_count.load(Ordering::SeqCst)
         }
     }
 
     impl GitHubCli for StubGitHubCli {
         fn search_my_open_prs(&self) -> Result<Vec<GitHubPullRequest>, String> {
+            self.call_count.fetch_add(1, Ordering::SeqCst);
             self.responses
                 .lock()
                 .unwrap()
                 .pop_front()
                 .unwrap_or_else(|| Ok(Vec::new()))
+        }
+    }
+
+    #[derive(Default)]
+    struct ManualRefreshScheduler {
+        tasks: Mutex<VecDeque<Box<dyn FnOnce() + Send>>>,
+    }
+
+    impl ManualRefreshScheduler {
+        fn pending_count(&self) -> usize {
+            self.tasks.lock().unwrap().len()
+        }
+
+        fn run_next(&self) {
+            if let Some(task) = self.tasks.lock().unwrap().pop_front() {
+                task();
+            }
+        }
+    }
+
+    impl RefreshScheduler for ManualRefreshScheduler {
+        fn schedule(&self, task: Box<dyn FnOnce() + Send>) {
+            self.tasks.lock().unwrap().push_back(task);
+        }
+    }
+
+    struct BlockingRefreshScheduler {
+        inner: Arc<ManualRefreshScheduler>,
+        started: Arc<(Mutex<usize>, Condvar)>,
+    }
+
+    impl BlockingRefreshScheduler {
+        fn new(inner: Arc<ManualRefreshScheduler>) -> Self {
+            Self {
+                inner,
+                started: Arc::new((Mutex::new(0), Condvar::new())),
+            }
+        }
+
+        fn wait_for_schedule_count(&self, expected: usize) {
+            let (lock, condvar) = &*self.started;
+            let mut count = lock.lock().unwrap();
+            while *count < expected {
+                count = condvar.wait(count).unwrap();
+            }
+        }
+    }
+
+    impl RefreshScheduler for BlockingRefreshScheduler {
+        fn schedule(&self, task: Box<dyn FnOnce() + Send>) {
+            self.inner.schedule(task);
+            let (lock, condvar) = &*self.started;
+            let mut count = lock.lock().unwrap();
+            *count += 1;
+            condvar.notify_all();
         }
     }
 
@@ -439,6 +648,197 @@ mod tests {
             .unwrap();
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].title, "Add metrics");
+    }
+
+    #[test]
+    fn provider_reuses_cached_results_across_sessions() {
+        let cli = Arc::new(StubGitHubCli::new(vec![Ok(vec![pr(
+            1,
+            "Remove built-in hello command",
+            "alexandrelam/rayon",
+            false,
+        )])]));
+        let scheduler = Arc::new(ManualRefreshScheduler::default());
+        let provider = GitHubMyPrsProvider::with_dependencies(
+            Arc::new(StubPlatform::default()),
+            cli.clone(),
+            scheduler.clone(),
+        );
+
+        let first_session = InteractiveSessionMetadata {
+            session_id: "session-1".into(),
+            command_id: CommandId::from(GITHUB_MY_PRS_COMMAND_ID),
+            title: "My Pull Requests".into(),
+            subtitle: Some("Open one of your authored pull requests".into()),
+            input_placeholder: "Filter by title, repository, or number".into(),
+            completion_behavior: InteractiveSessionCompletionBehavior::HideLauncher,
+        };
+        let second_session = InteractiveSessionMetadata {
+            session_id: "session-2".into(),
+            ..first_session.clone()
+        };
+
+        let first_results = provider
+            .search_interactive_session(&first_session, "")
+            .unwrap();
+        let second_results = provider
+            .search_interactive_session(&second_session, "")
+            .unwrap();
+
+        assert_eq!(first_results, second_results);
+        assert_eq!(cli.call_count(), 1);
+        assert_eq!(scheduler.pending_count(), 1);
+    }
+
+    #[test]
+    fn provider_refreshes_cached_results_in_background_for_next_open() {
+        let cli = Arc::new(StubGitHubCli::new(vec![
+            Ok(vec![pr(1, "Old title", "alexandrelam/rayon", false)]),
+            Ok(vec![pr(2, "New title", "alexandrelam/rayon", false)]),
+        ]));
+        let scheduler = Arc::new(ManualRefreshScheduler::default());
+        let provider = GitHubMyPrsProvider::with_dependencies(
+            Arc::new(StubPlatform::default()),
+            cli,
+            scheduler.clone(),
+        );
+
+        let first_session = InteractiveSessionMetadata {
+            session_id: "session-1".into(),
+            command_id: CommandId::from(GITHUB_MY_PRS_COMMAND_ID),
+            title: "My Pull Requests".into(),
+            subtitle: Some("Open one of your authored pull requests".into()),
+            input_placeholder: "Filter by title, repository, or number".into(),
+            completion_behavior: InteractiveSessionCompletionBehavior::HideLauncher,
+        };
+        let second_session = InteractiveSessionMetadata {
+            session_id: "session-2".into(),
+            ..first_session.clone()
+        };
+        let third_session = InteractiveSessionMetadata {
+            session_id: "session-3".into(),
+            ..first_session.clone()
+        };
+
+        let first_results = provider
+            .search_interactive_session(&first_session, "")
+            .unwrap();
+        let second_results = provider
+            .search_interactive_session(&second_session, "")
+            .unwrap();
+
+        assert_eq!(first_results[0].title, "Old title");
+        assert_eq!(second_results[0].title, "Old title");
+        assert_eq!(scheduler.pending_count(), 1);
+
+        scheduler.run_next();
+
+        let third_results = provider
+            .search_interactive_session(&third_session, "")
+            .unwrap();
+        assert_eq!(third_results[0].title, "New title");
+    }
+
+    #[test]
+    fn provider_keeps_stale_results_when_background_refresh_fails() {
+        let cli = Arc::new(StubGitHubCli::new(vec![
+            Ok(vec![pr(1, "Stable title", "alexandrelam/rayon", false)]),
+            Err("refresh failed".into()),
+        ]));
+        let scheduler = Arc::new(ManualRefreshScheduler::default());
+        let provider = GitHubMyPrsProvider::with_dependencies(
+            Arc::new(StubPlatform::default()),
+            cli,
+            scheduler.clone(),
+        );
+
+        let first_session = InteractiveSessionMetadata {
+            session_id: "session-1".into(),
+            command_id: CommandId::from(GITHUB_MY_PRS_COMMAND_ID),
+            title: "My Pull Requests".into(),
+            subtitle: Some("Open one of your authored pull requests".into()),
+            input_placeholder: "Filter by title, repository, or number".into(),
+            completion_behavior: InteractiveSessionCompletionBehavior::HideLauncher,
+        };
+        let second_session = InteractiveSessionMetadata {
+            session_id: "session-2".into(),
+            ..first_session.clone()
+        };
+        let third_session = InteractiveSessionMetadata {
+            session_id: "session-3".into(),
+            ..first_session.clone()
+        };
+
+        provider
+            .search_interactive_session(&first_session, "")
+            .unwrap();
+        provider
+            .search_interactive_session(&second_session, "")
+            .unwrap();
+        scheduler.run_next();
+
+        let third_results = provider
+            .search_interactive_session(&third_session, "")
+            .unwrap();
+        assert_eq!(third_results[0].title, "Stable title");
+    }
+
+    #[test]
+    fn provider_schedules_only_one_background_refresh_at_a_time() {
+        let cli = Arc::new(StubGitHubCli::new(vec![
+            Ok(vec![pr(1, "Stable title", "alexandrelam/rayon", false)]),
+            Ok(vec![pr(2, "Updated title", "alexandrelam/rayon", false)]),
+        ]));
+        let manual_scheduler = Arc::new(ManualRefreshScheduler::default());
+        let scheduler = Arc::new(BlockingRefreshScheduler::new(manual_scheduler.clone()));
+        let provider = Arc::new(GitHubMyPrsProvider::with_dependencies(
+            Arc::new(StubPlatform::default()),
+            cli.clone(),
+            scheduler.clone(),
+        ));
+
+        let base_session = InteractiveSessionMetadata {
+            session_id: "session-1".into(),
+            command_id: CommandId::from(GITHUB_MY_PRS_COMMAND_ID),
+            title: "My Pull Requests".into(),
+            subtitle: Some("Open one of your authored pull requests".into()),
+            input_placeholder: "Filter by title, repository, or number".into(),
+            completion_behavior: InteractiveSessionCompletionBehavior::HideLauncher,
+        };
+
+        provider
+            .search_interactive_session(&base_session, "")
+            .unwrap();
+
+        let provider_a = provider.clone();
+        let session_a = InteractiveSessionMetadata {
+            session_id: "session-2".into(),
+            ..base_session.clone()
+        };
+        let handle_a = std::thread::spawn(move || {
+            provider_a
+                .search_interactive_session(&session_a, "")
+                .unwrap();
+        });
+
+        scheduler.wait_for_schedule_count(1);
+
+        let provider_b = provider.clone();
+        let session_b = InteractiveSessionMetadata {
+            session_id: "session-3".into(),
+            ..base_session.clone()
+        };
+        let handle_b = std::thread::spawn(move || {
+            provider_b
+                .search_interactive_session(&session_b, "")
+                .unwrap();
+        });
+
+        handle_a.join().unwrap();
+        handle_b.join().unwrap();
+
+        assert_eq!(manual_scheduler.pending_count(), 1);
+        assert_eq!(cli.call_count(), 1);
     }
 
     #[test]
@@ -508,5 +908,33 @@ mod tests {
                 "GitHub CLI is not authenticated. Run gh auth login.".into()
             )
         );
+    }
+
+    #[test]
+    fn finds_program_in_path_list() {
+        let tempdir = std::env::temp_dir().join(format!("rayon-gh-test-{}", std::process::id()));
+        fs::create_dir_all(&tempdir).unwrap();
+        let gh_path = tempdir.join("gh");
+        fs::write(&gh_path, "#!/bin/sh\n").unwrap();
+
+        let resolved = find_program_in_path_list("gh", &OsString::from(tempdir.as_os_str()));
+
+        assert_eq!(resolved, Some(gh_path));
+
+        fs::remove_file(tempdir.join("gh")).unwrap();
+        fs::remove_dir(tempdir).unwrap();
+    }
+
+    #[test]
+    fn skips_missing_program_in_path_list() {
+        let tempdir =
+            std::env::temp_dir().join(format!("rayon-gh-missing-test-{}", std::process::id()));
+        fs::create_dir_all(&tempdir).unwrap();
+
+        let resolved = find_program_in_path_list("gh", &OsString::from(tempdir.as_os_str()));
+
+        assert_eq!(resolved, None);
+
+        fs::remove_dir(tempdir).unwrap();
     }
 }
