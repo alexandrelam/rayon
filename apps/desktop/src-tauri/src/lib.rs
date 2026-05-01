@@ -35,7 +35,7 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             if window.label() == MAIN_WINDOW_LABEL && matches!(event, WindowEvent::Focused(false)) {
-                let _ = window.hide();
+                let _ = shell::hide_launcher(window.app_handle());
             }
         })
         .invoke_handler(tauri::generate_handler![
