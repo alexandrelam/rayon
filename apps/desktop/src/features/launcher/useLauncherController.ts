@@ -729,9 +729,9 @@ export function useLauncherController(): LauncherController {
     inputRef,
     query,
     placeholder: activeArgument
-        ? activeArgument.argument_type === "boolean"
-          ? "true / false"
-          : activeArgument.label
+      ? activeArgument.argument_type === "boolean"
+        ? "true / false"
+        : activeArgument.label
       : interactiveSession
         ? interactiveSession.input_placeholder
         : inputMode === "browser_tabs"

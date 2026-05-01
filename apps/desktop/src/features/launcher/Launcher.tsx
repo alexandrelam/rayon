@@ -1,4 +1,5 @@
 import { LauncherArgumentPanel } from "./components/LauncherArgumentPanel";
+import { LauncherAnimatedPresence } from "./components/LauncherAnimatedPresence";
 import { LauncherFooter } from "./components/LauncherFooter";
 import { LauncherHeader } from "./components/LauncherHeader";
 import { LauncherResultsList } from "./components/LauncherResultsList";
@@ -22,19 +23,25 @@ export function Launcher() {
         onKeyDown={controller.onKeyDown}
       />
 
-      {controller.argumentPanel ? <LauncherArgumentPanel {...controller.argumentPanel} /> : null}
+      <LauncherAnimatedPresence isVisible={controller.argumentPanel !== null}>
+        {controller.argumentPanel ? <LauncherArgumentPanel {...controller.argumentPanel} /> : null}
+      </LauncherAnimatedPresence>
 
-      {controller.showResults ? (
-        <LauncherResultsList
-          items={controller.resultItems}
-          showInteractiveSkeleton={controller.showInteractiveSkeleton}
-          emptyMessage={controller.emptyMessage}
-          onSelect={controller.onResultSelect}
-          setItemRef={controller.setResultItemRef}
-        />
-      ) : null}
+      <LauncherAnimatedPresence isVisible={controller.showResults}>
+        {controller.showResults ? (
+          <LauncherResultsList
+            items={controller.resultItems}
+            showInteractiveSkeleton={controller.showInteractiveSkeleton}
+            emptyMessage={controller.emptyMessage}
+            onSelect={controller.onResultSelect}
+            setItemRef={controller.setResultItemRef}
+          />
+        ) : null}
+      </LauncherAnimatedPresence>
 
-      {controller.showFooter ? <LauncherFooter {...controller.footer} /> : null}
+      <LauncherAnimatedPresence isVisible={controller.showFooter}>
+        {controller.showFooter ? <LauncherFooter {...controller.footer} /> : null}
+      </LauncherAnimatedPresence>
     </LauncherShell>
   );
 }

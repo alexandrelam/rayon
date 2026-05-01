@@ -9,10 +9,24 @@ use tauri::{
 };
 
 const LAUNCHER_OPENED_EVENT: &str = "launcher:opened";
+const LAUNCHER_OPEN_ANIMATION_MS: u64 = 110;
+const LAUNCHER_CLOSE_ANIMATION_MS: u64 = 110;
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum PendingHideAction {
+    None,
+    Hide,
+    HideAndRestoreFocus,
+}
 
 fn previous_frontmost_pid() -> &'static Mutex<Option<i32>> {
     static PREVIOUS_FRONTMOST_PID: OnceLock<Mutex<Option<i32>>> = OnceLock::new();
     PREVIOUS_FRONTMOST_PID.get_or_init(|| Mutex::new(None))
+}
+
+fn launcher_hide_pending() -> &'static Mutex<PendingHideAction> {
+    static LAUNCHER_HIDE_PENDING: OnceLock<Mutex<PendingHideAction>> = OnceLock::new();
+    LAUNCHER_HIDE_PENDING.get_or_init(|| Mutex::new(PendingHideAction::None))
 }
 
 pub fn show_launcher(app: &AppHandle) -> tauri::Result<()> {
@@ -21,39 +35,59 @@ pub fn show_launcher(app: &AppHandle) -> tauri::Result<()> {
         .ok_or_else(|| tauri::Error::AssetNotFound(MAIN_WINDOW_LABEL.into()))?;
 
     store_previous_frontmost_application();
+    set_launcher_hide_pending(PendingHideAction::None);
 
     #[cfg(target_os = "macos")]
     {
         app.show()?;
+        prepare_launcher_window_for_show(&window)?;
     }
 
     window.unminimize()?;
     window.center()?;
     window.show()?;
+
+    #[cfg(target_os = "macos")]
+    animate_launcher_window_alpha(&window, 1.0, LAUNCHER_OPEN_ANIMATION_MS)?;
+
     window.set_focus()?;
     window.emit(LAUNCHER_OPENED_EVENT, ())?;
     Ok(())
 }
 
 pub fn hide_launcher(app: &AppHandle) -> tauri::Result<()> {
-    hide_launcher_window(app)?;
-    clear_previous_frontmost_application();
-    Ok(())
+    hide_launcher_window(app, false)
 }
 
 pub fn hide_launcher_and_restore_focus(app: &AppHandle) -> tauri::Result<()> {
-    hide_launcher_window(app)?;
-    restore_previous_frontmost_application();
-    Ok(())
+    hide_launcher_window(app, true)
 }
 
-fn hide_launcher_window(app: &AppHandle) -> tauri::Result<()> {
+fn hide_launcher_window(app: &AppHandle, restore_focus: bool) -> tauri::Result<()> {
     let window = app
         .get_webview_window(MAIN_WINDOW_LABEL)
         .ok_or_else(|| tauri::Error::AssetNotFound(MAIN_WINDOW_LABEL.into()))?;
 
-    window.hide()?;
-    Ok(())
+    if !window.is_visible()? {
+        return Ok(());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        start_launcher_hide_animation(app.clone(), restore_focus)?;
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        window.hide()?;
+        if restore_focus {
+            restore_previous_frontmost_application();
+        } else {
+            clear_previous_frontmost_application();
+        }
+        Ok(())
+    }
 }
 
 pub fn toggle_launcher(app: &AppHandle) -> tauri::Result<()> {
@@ -178,6 +212,123 @@ fn restore_previous_frontmost_application() {
 #[cfg(not(target_os = "macos"))]
 fn restore_previous_frontmost_application() {
     clear_previous_frontmost_application();
+}
+
+fn set_launcher_hide_pending(pending_action: PendingHideAction) {
+    if let Ok(mut pending) = launcher_hide_pending().lock() {
+        *pending = pending_action;
+    }
+}
+
+fn take_launcher_hide_pending() -> PendingHideAction {
+    if let Ok(mut pending) = launcher_hide_pending().lock() {
+        let pending_action = *pending;
+        *pending = PendingHideAction::None;
+        return pending_action;
+    }
+
+    PendingHideAction::None
+}
+
+#[cfg(target_os = "macos")]
+fn start_launcher_hide_animation(app: AppHandle, restore_focus: bool) -> tauri::Result<()> {
+    let window = app
+        .get_webview_window(MAIN_WINDOW_LABEL)
+        .ok_or_else(|| tauri::Error::AssetNotFound(MAIN_WINDOW_LABEL.into()))?;
+
+    if register_pending_hide_action(restore_focus) {
+        return Ok(());
+    }
+
+    animate_launcher_window_alpha(&window, 0.0, LAUNCHER_CLOSE_ANIMATION_MS)?;
+
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(
+            LAUNCHER_CLOSE_ANIMATION_MS,
+        ));
+        let app_handle = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            let pending_action = take_launcher_hide_pending();
+            if pending_action == PendingHideAction::None {
+                return;
+            }
+
+            if let Some(window) = app_handle.get_webview_window(MAIN_WINDOW_LABEL) {
+                let _ = window.hide();
+            }
+
+            if pending_action == PendingHideAction::HideAndRestoreFocus {
+                restore_previous_frontmost_application();
+            } else {
+                clear_previous_frontmost_application();
+            }
+        });
+    });
+
+    Ok(())
+}
+
+fn register_pending_hide_action(restore_focus: bool) -> bool {
+    if let Ok(mut pending) = launcher_hide_pending().lock() {
+        let next_action = if restore_focus {
+            PendingHideAction::HideAndRestoreFocus
+        } else {
+            PendingHideAction::Hide
+        };
+
+        if *pending != PendingHideAction::None {
+            if *pending == PendingHideAction::Hide && restore_focus {
+                *pending = PendingHideAction::HideAndRestoreFocus;
+            }
+            return true;
+        }
+
+        *pending = next_action;
+    }
+
+    false
+}
+
+#[cfg(target_os = "macos")]
+fn prepare_launcher_window_for_show(window: &tauri::WebviewWindow) -> tauri::Result<()> {
+    set_launcher_window_alpha(window, 0.0)
+}
+
+#[cfg(target_os = "macos")]
+fn animate_launcher_window_alpha(
+    window: &tauri::WebviewWindow,
+    alpha: f64,
+    duration_ms: u64,
+) -> tauri::Result<()> {
+    use objc::{class, msg_send, runtime::Object, sel, sel_impl};
+
+    let ns_window = window.ns_window()? as *mut Object;
+
+    unsafe {
+        let animation_context_class = class!(NSAnimationContext);
+        let _: () = msg_send![animation_context_class, beginGrouping];
+        let context: *mut Object = msg_send![animation_context_class, currentContext];
+        let duration = duration_ms as f64 / 1000.0;
+        let _: () = msg_send![context, setDuration: duration];
+        let animator: *mut Object = msg_send![ns_window, animator];
+        let _: () = msg_send![animator, setAlphaValue: alpha];
+        let _: () = msg_send![animation_context_class, endGrouping];
+    }
+
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn set_launcher_window_alpha(window: &tauri::WebviewWindow, alpha: f64) -> tauri::Result<()> {
+    use objc::{msg_send, runtime::Object, sel, sel_impl};
+
+    let ns_window = window.ns_window()? as *mut Object;
+
+    unsafe {
+        let _: () = msg_send![ns_window, setAlphaValue: alpha];
+    }
+
+    Ok(())
 }
 
 #[cfg(target_os = "macos")]
