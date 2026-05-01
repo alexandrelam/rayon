@@ -5,6 +5,7 @@ use rayon_types::{
     InteractiveSessionResult,
 };
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -46,34 +47,47 @@ impl GitHubMyPrsProvider {
         }
     }
 
-    fn cached_prs(&self) -> Result<Option<Vec<GitHubPullRequest>>, CommandError> {
+    fn session_prs(
+        &self,
+        session: &InteractiveSessionMetadata,
+    ) -> Result<Vec<GitHubPullRequest>, CommandError> {
         let cache = self
             .cache
             .lock()
             .map_err(|_| CommandError::ExecutionFailed("GitHub PR cache lock poisoned".into()))?;
-        Ok(cache.prs.clone())
-    }
-
-    fn session_prs(
-        &self,
-        _session: &InteractiveSessionMetadata,
-    ) -> Result<Vec<GitHubPullRequest>, CommandError> {
-        if let Some(prs) = self.cached_prs()? {
-            self.schedule_refresh_if_needed()?;
-            return Ok(prs);
+        if let Some(prs) = cache.session_prs.get(&session.session_id) {
+            return Ok(prs.clone());
         }
+        let shared_prs = cache.shared_prs.clone();
+        drop(cache);
 
-        let prs = self
-            .cli
-            .search_my_open_prs()
-            .map_err(CommandError::ExecutionFailed)?;
+        let prs = if let Some(prs) = shared_prs {
+            self.schedule_refresh_if_needed()?;
+            prs
+        } else {
+            self.cli
+                .search_my_open_prs()
+                .map_err(CommandError::ExecutionFailed)?
+        };
+
         let mut cache = self
             .cache
             .lock()
             .map_err(|_| CommandError::ExecutionFailed("GitHub PR cache lock poisoned".into()))?;
-        cache.prs = Some(prs.clone());
-        cache.last_refresh_error = None;
+        if let Some(existing_prs) = cache.session_prs.get(&session.session_id) {
+            return Ok(existing_prs.clone());
+        }
+        cache.shared_prs.get_or_insert_with(|| prs.clone());
+        cache
+            .session_prs
+            .insert(session.session_id.clone(), prs.clone());
         Ok(prs)
+    }
+
+    fn clear_session(&self, session_id: &str) {
+        if let Ok(mut cache) = self.cache.lock() {
+            cache.session_prs.remove(session_id);
+        }
     }
 
     fn schedule_refresh_if_needed(&self) -> Result<(), CommandError> {
@@ -90,26 +104,33 @@ impl GitHubMyPrsProvider {
 
         let cli = Arc::clone(&self.cli);
         let cache = Arc::clone(&self.cache);
-        self.refresh_scheduler.schedule(Box::new(move || {
-            let refresh_result = cli.search_my_open_prs();
-            match cache.lock() {
-                Ok(mut cache) => {
-                    if let Ok(prs) = refresh_result {
-                        cache.prs = Some(prs);
-                        cache.last_refresh_error = None;
-                    } else if let Err(error) = refresh_result {
-                        eprintln!("github pr refresh failed: {error}");
-                        cache.last_refresh_error = Some(error);
+        self.refresh_scheduler
+            .schedule(Box::new(move || {
+                let refresh_result = cli.search_my_open_prs();
+                match cache.lock() {
+                    Ok(mut cache) => {
+                        if let Ok(prs) = refresh_result {
+                            cache.shared_prs = Some(prs);
+                            cache.last_refresh_error = None;
+                        } else if let Err(error) = refresh_result {
+                            eprintln!("github pr refresh failed: {error}");
+                            cache.last_refresh_error = Some(error);
+                        }
+                        cache.refresh_in_flight = false;
                     }
+                    Err(_) => {
+                        if let Err(error) = refresh_result {
+                            eprintln!("github pr refresh failed after cache lock poison: {error}");
+                        }
+                    }
+                }
+            }))
+            .map_err(|error| {
+                if let Ok(mut cache) = self.cache.lock() {
                     cache.refresh_in_flight = false;
                 }
-                Err(_) => {
-                    if let Err(error) = refresh_result {
-                        eprintln!("github pr refresh failed after cache lock poison: {error}");
-                    }
-                }
-            }
-        }));
+                CommandError::ExecutionFailed(error)
+            })?;
         Ok(())
     }
 }
@@ -200,7 +221,9 @@ impl CommandProvider for GitHubMyPrsProvider {
         ))
     }
 
-    fn end_interactive_session(&self, _session: &InteractiveSessionMetadata) {}
+    fn end_interactive_session(&self, session: &InteractiveSessionMetadata) {
+        self.clear_session(&session.session_id);
+    }
 }
 
 trait GitHubCli: Send + Sync {
@@ -208,22 +231,25 @@ trait GitHubCli: Send + Sync {
 }
 
 trait RefreshScheduler: Send + Sync {
-    fn schedule(&self, task: Box<dyn FnOnce() + Send>);
+    fn schedule(&self, task: Box<dyn FnOnce() + Send>) -> Result<(), String>;
 }
 
 struct ThreadRefreshScheduler;
 
 impl RefreshScheduler for ThreadRefreshScheduler {
-    fn schedule(&self, task: Box<dyn FnOnce() + Send>) {
-        let _ = std::thread::Builder::new()
+    fn schedule(&self, task: Box<dyn FnOnce() + Send>) -> Result<(), String> {
+        std::thread::Builder::new()
             .name("github-pr-refresh".into())
-            .spawn(task);
+            .spawn(task)
+            .map(|_| ())
+            .map_err(|error| format!("failed to schedule GitHub PR refresh: {error}"))
     }
 }
 
 #[derive(Default)]
 struct GitHubPrCache {
-    prs: Option<Vec<GitHubPullRequest>>,
+    session_prs: HashMap<String, Vec<GitHubPullRequest>>,
+    shared_prs: Option<Vec<GitHubPullRequest>>,
     refresh_in_flight: bool,
     last_refresh_error: Option<String>,
 }
@@ -552,8 +578,9 @@ mod tests {
     }
 
     impl RefreshScheduler for ManualRefreshScheduler {
-        fn schedule(&self, task: Box<dyn FnOnce() + Send>) {
+        fn schedule(&self, task: Box<dyn FnOnce() + Send>) -> Result<(), String> {
             self.tasks.lock().unwrap().push_back(task);
+            Ok(())
         }
     }
 
@@ -580,12 +607,42 @@ mod tests {
     }
 
     impl RefreshScheduler for BlockingRefreshScheduler {
-        fn schedule(&self, task: Box<dyn FnOnce() + Send>) {
-            self.inner.schedule(task);
+        fn schedule(&self, task: Box<dyn FnOnce() + Send>) -> Result<(), String> {
+            self.inner.schedule(task)?;
             let (lock, condvar) = &*self.started;
             let mut count = lock.lock().unwrap();
             *count += 1;
             condvar.notify_all();
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct FailingRefreshScheduler {
+        attempts: AtomicUsize,
+    }
+
+    impl FailingRefreshScheduler {
+        fn attempts(&self) -> usize {
+            self.attempts.load(Ordering::SeqCst)
+        }
+    }
+
+    impl RefreshScheduler for FailingRefreshScheduler {
+        fn schedule(&self, _task: Box<dyn FnOnce() + Send>) -> Result<(), String> {
+            self.attempts.fetch_add(1, Ordering::SeqCst);
+            Err("scheduler offline".into())
+        }
+    }
+
+    fn session(session_id: &str) -> InteractiveSessionMetadata {
+        InteractiveSessionMetadata {
+            session_id: session_id.into(),
+            command_id: CommandId::from(GITHUB_MY_PRS_COMMAND_ID),
+            title: "My Pull Requests".into(),
+            subtitle: Some("Open one of your authored pull requests".into()),
+            input_placeholder: "Filter by title, repository, or number".into(),
+            completion_behavior: InteractiveSessionCompletionBehavior::HideLauncher,
         }
     }
 
@@ -651,7 +708,7 @@ mod tests {
     }
 
     #[test]
-    fn provider_reuses_cached_results_across_sessions() {
+    fn provider_reuses_session_snapshot_within_session() {
         let cli = Arc::new(StubGitHubCli::new(vec![Ok(vec![pr(
             1,
             "Remove built-in hello command",
@@ -665,33 +722,18 @@ mod tests {
             scheduler.clone(),
         );
 
-        let first_session = InteractiveSessionMetadata {
-            session_id: "session-1".into(),
-            command_id: CommandId::from(GITHUB_MY_PRS_COMMAND_ID),
-            title: "My Pull Requests".into(),
-            subtitle: Some("Open one of your authored pull requests".into()),
-            input_placeholder: "Filter by title, repository, or number".into(),
-            completion_behavior: InteractiveSessionCompletionBehavior::HideLauncher,
-        };
-        let second_session = InteractiveSessionMetadata {
-            session_id: "session-2".into(),
-            ..first_session.clone()
-        };
+        let session = session("session-1");
 
-        let first_results = provider
-            .search_interactive_session(&first_session, "")
-            .unwrap();
-        let second_results = provider
-            .search_interactive_session(&second_session, "")
-            .unwrap();
+        let first_results = provider.search_interactive_session(&session, "").unwrap();
+        let second_results = provider.search_interactive_session(&session, "").unwrap();
 
         assert_eq!(first_results, second_results);
         assert_eq!(cli.call_count(), 1);
-        assert_eq!(scheduler.pending_count(), 1);
+        assert_eq!(scheduler.pending_count(), 0);
     }
 
     #[test]
-    fn provider_refreshes_cached_results_in_background_for_next_open() {
+    fn provider_keeps_session_snapshot_stable_while_refreshing_shared_cache() {
         let cli = Arc::new(StubGitHubCli::new(vec![
             Ok(vec![pr(1, "Old title", "alexandrelam/rayon", false)]),
             Ok(vec![pr(2, "New title", "alexandrelam/rayon", false)]),
@@ -703,22 +745,9 @@ mod tests {
             scheduler.clone(),
         );
 
-        let first_session = InteractiveSessionMetadata {
-            session_id: "session-1".into(),
-            command_id: CommandId::from(GITHUB_MY_PRS_COMMAND_ID),
-            title: "My Pull Requests".into(),
-            subtitle: Some("Open one of your authored pull requests".into()),
-            input_placeholder: "Filter by title, repository, or number".into(),
-            completion_behavior: InteractiveSessionCompletionBehavior::HideLauncher,
-        };
-        let second_session = InteractiveSessionMetadata {
-            session_id: "session-2".into(),
-            ..first_session.clone()
-        };
-        let third_session = InteractiveSessionMetadata {
-            session_id: "session-3".into(),
-            ..first_session.clone()
-        };
+        let first_session = session("session-1");
+        let second_session = session("session-2");
+        let third_session = session("session-3");
 
         let first_results = provider
             .search_interactive_session(&first_session, "")
@@ -733,10 +762,29 @@ mod tests {
 
         scheduler.run_next();
 
+        let refreshed_second_results = provider
+            .search_interactive_session(&second_session, "")
+            .unwrap();
         let third_results = provider
             .search_interactive_session(&third_session, "")
             .unwrap();
+
+        let submit_result = provider
+            .submit_interactive_session(
+                &first_session,
+                "",
+                "https://github.com/alexandrelam/rayon/pull/1",
+            )
+            .unwrap();
+
+        assert_eq!(refreshed_second_results[0].title, "Old title");
         assert_eq!(third_results[0].title, "New title");
+        assert_eq!(
+            submit_result,
+            InteractiveSessionSubmitOutcome::Completed(CommandExecutionResult {
+                output: "opened alexandrelam/rayon#1".into(),
+            })
+        );
     }
 
     #[test]
@@ -752,22 +800,9 @@ mod tests {
             scheduler.clone(),
         );
 
-        let first_session = InteractiveSessionMetadata {
-            session_id: "session-1".into(),
-            command_id: CommandId::from(GITHUB_MY_PRS_COMMAND_ID),
-            title: "My Pull Requests".into(),
-            subtitle: Some("Open one of your authored pull requests".into()),
-            input_placeholder: "Filter by title, repository, or number".into(),
-            completion_behavior: InteractiveSessionCompletionBehavior::HideLauncher,
-        };
-        let second_session = InteractiveSessionMetadata {
-            session_id: "session-2".into(),
-            ..first_session.clone()
-        };
-        let third_session = InteractiveSessionMetadata {
-            session_id: "session-3".into(),
-            ..first_session.clone()
-        };
+        let first_session = session("session-1");
+        let second_session = session("session-2");
+        let third_session = session("session-3");
 
         provider
             .search_interactive_session(&first_session, "")
@@ -797,14 +832,7 @@ mod tests {
             scheduler.clone(),
         ));
 
-        let base_session = InteractiveSessionMetadata {
-            session_id: "session-1".into(),
-            command_id: CommandId::from(GITHUB_MY_PRS_COMMAND_ID),
-            title: "My Pull Requests".into(),
-            subtitle: Some("Open one of your authored pull requests".into()),
-            input_placeholder: "Filter by title, repository, or number".into(),
-            completion_behavior: InteractiveSessionCompletionBehavior::HideLauncher,
-        };
+        let base_session = session("session-1");
 
         provider
             .search_interactive_session(&base_session, "")
@@ -842,6 +870,71 @@ mod tests {
     }
 
     #[test]
+    fn provider_clears_only_the_ended_session_snapshot() {
+        let provider = GitHubMyPrsProvider::with_cli(
+            Arc::new(StubPlatform::default()),
+            Arc::new(StubGitHubCli::new(vec![Ok(vec![pr(
+                1,
+                "First title",
+                "alexandrelam/rayon",
+                false,
+            )])])),
+        );
+        let first_session = session("session-1");
+        let second_session = session("session-2");
+
+        provider
+            .search_interactive_session(&first_session, "")
+            .unwrap();
+        provider
+            .search_interactive_session(&second_session, "")
+            .unwrap();
+        provider.end_interactive_session(&first_session);
+
+        let cache = provider.cache.lock().unwrap();
+        assert!(!cache.session_prs.contains_key("session-1"));
+        assert!(cache.session_prs.contains_key("session-2"));
+    }
+
+    #[test]
+    fn provider_allows_future_refresh_attempts_after_scheduler_failure() {
+        let cli = Arc::new(StubGitHubCli::new(vec![Ok(vec![pr(
+            1,
+            "Stable title",
+            "alexandrelam/rayon",
+            false,
+        )])]));
+        let scheduler = Arc::new(FailingRefreshScheduler::default());
+        let provider = GitHubMyPrsProvider::with_dependencies(
+            Arc::new(StubPlatform::default()),
+            cli.clone(),
+            scheduler.clone(),
+        );
+
+        provider
+            .search_interactive_session(&session("session-1"), "")
+            .unwrap();
+
+        let second_error = provider
+            .search_interactive_session(&session("session-2"), "")
+            .unwrap_err();
+        let third_error = provider
+            .search_interactive_session(&session("session-3"), "")
+            .unwrap_err();
+
+        assert_eq!(
+            second_error,
+            CommandError::ExecutionFailed("scheduler offline".into())
+        );
+        assert_eq!(
+            third_error,
+            CommandError::ExecutionFailed("scheduler offline".into())
+        );
+        assert_eq!(scheduler.attempts(), 2);
+        assert_eq!(cli.call_count(), 1);
+    }
+
+    #[test]
     fn provider_opens_selected_pull_request_and_completes() {
         let platform = Arc::new(StubPlatform::default());
         let provider = GitHubMyPrsProvider::with_cli(
@@ -853,14 +946,7 @@ mod tests {
                 false,
             )])])),
         );
-        let session = InteractiveSessionMetadata {
-            session_id: "session-1".into(),
-            command_id: CommandId::from(GITHUB_MY_PRS_COMMAND_ID),
-            title: "My Pull Requests".into(),
-            subtitle: Some("Open one of your authored pull requests".into()),
-            input_placeholder: "Filter by title, repository, or number".into(),
-            completion_behavior: InteractiveSessionCompletionBehavior::HideLauncher,
-        };
+        let session = session("session-1");
 
         let result = provider
             .submit_interactive_session(
@@ -890,14 +976,7 @@ mod tests {
                 "GitHub CLI is not authenticated. Run gh auth login.".into(),
             )])),
         );
-        let session = InteractiveSessionMetadata {
-            session_id: "session-1".into(),
-            command_id: CommandId::from(GITHUB_MY_PRS_COMMAND_ID),
-            title: "My Pull Requests".into(),
-            subtitle: Some("Open one of your authored pull requests".into()),
-            input_placeholder: "Filter by title, repository, or number".into(),
-            completion_behavior: InteractiveSessionCompletionBehavior::HideLauncher,
-        };
+        let session = session("session-1");
 
         let error = provider
             .search_interactive_session(&session, "")
