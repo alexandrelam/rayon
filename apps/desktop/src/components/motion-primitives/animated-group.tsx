@@ -77,7 +77,10 @@ export function AnimatedGroup({
       className={className}
     >
       {React.Children.map(children, (child, index) => (
-        <motion.li key={index} variants={itemVariants}>
+        <motion.li
+          key={React.isValidElement(child) && child.key !== null ? child.key : index}
+          variants={itemVariants}
+        >
           {child}
         </motion.li>
       ))}

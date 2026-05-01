@@ -12,14 +12,21 @@ const LAUNCHER_OPENED_EVENT: &str = "launcher:opened";
 const LAUNCHER_OPEN_ANIMATION_MS: u64 = 110;
 const LAUNCHER_CLOSE_ANIMATION_MS: u64 = 110;
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum PendingHideAction {
+    None,
+    Hide,
+    HideAndRestoreFocus,
+}
+
 fn previous_frontmost_pid() -> &'static Mutex<Option<i32>> {
     static PREVIOUS_FRONTMOST_PID: OnceLock<Mutex<Option<i32>>> = OnceLock::new();
     PREVIOUS_FRONTMOST_PID.get_or_init(|| Mutex::new(None))
 }
 
-fn launcher_hide_pending() -> &'static Mutex<bool> {
-    static LAUNCHER_HIDE_PENDING: OnceLock<Mutex<bool>> = OnceLock::new();
-    LAUNCHER_HIDE_PENDING.get_or_init(|| Mutex::new(false))
+fn launcher_hide_pending() -> &'static Mutex<PendingHideAction> {
+    static LAUNCHER_HIDE_PENDING: OnceLock<Mutex<PendingHideAction>> = OnceLock::new();
+    LAUNCHER_HIDE_PENDING.get_or_init(|| Mutex::new(PendingHideAction::None))
 }
 
 pub fn show_launcher(app: &AppHandle) -> tauri::Result<()> {
@@ -28,7 +35,7 @@ pub fn show_launcher(app: &AppHandle) -> tauri::Result<()> {
         .ok_or_else(|| tauri::Error::AssetNotFound(MAIN_WINDOW_LABEL.into()))?;
 
     store_previous_frontmost_application();
-    set_launcher_hide_pending(false);
+    set_launcher_hide_pending(PendingHideAction::None);
 
     #[cfg(target_os = "macos")]
     {
@@ -207,20 +214,20 @@ fn restore_previous_frontmost_application() {
     clear_previous_frontmost_application();
 }
 
-fn set_launcher_hide_pending(is_pending: bool) {
+fn set_launcher_hide_pending(pending_action: PendingHideAction) {
     if let Ok(mut pending) = launcher_hide_pending().lock() {
-        *pending = is_pending;
+        *pending = pending_action;
     }
 }
 
-fn take_launcher_hide_pending() -> bool {
+fn take_launcher_hide_pending() -> PendingHideAction {
     if let Ok(mut pending) = launcher_hide_pending().lock() {
-        let was_pending = *pending;
-        *pending = false;
-        return was_pending;
+        let pending_action = *pending;
+        *pending = PendingHideAction::None;
+        return pending_action;
     }
 
-    false
+    PendingHideAction::None
 }
 
 #[cfg(target_os = "macos")]
@@ -229,7 +236,7 @@ fn start_launcher_hide_animation(app: AppHandle, restore_focus: bool) -> tauri::
         .get_webview_window(MAIN_WINDOW_LABEL)
         .ok_or_else(|| tauri::Error::AssetNotFound(MAIN_WINDOW_LABEL.into()))?;
 
-    if take_if_hide_is_already_pending() {
+    if register_pending_hide_action(restore_focus) {
         return Ok(());
     }
 
@@ -241,7 +248,8 @@ fn start_launcher_hide_animation(app: AppHandle, restore_focus: bool) -> tauri::
         ));
         let app_handle = app.clone();
         let _ = app.run_on_main_thread(move || {
-            if !take_launcher_hide_pending() {
+            let pending_action = take_launcher_hide_pending();
+            if pending_action == PendingHideAction::None {
                 return;
             }
 
@@ -249,7 +257,7 @@ fn start_launcher_hide_animation(app: AppHandle, restore_focus: bool) -> tauri::
                 let _ = window.hide();
             }
 
-            if restore_focus {
+            if pending_action == PendingHideAction::HideAndRestoreFocus {
                 restore_previous_frontmost_application();
             } else {
                 clear_previous_frontmost_application();
@@ -260,13 +268,22 @@ fn start_launcher_hide_animation(app: AppHandle, restore_focus: bool) -> tauri::
     Ok(())
 }
 
-fn take_if_hide_is_already_pending() -> bool {
+fn register_pending_hide_action(restore_focus: bool) -> bool {
     if let Ok(mut pending) = launcher_hide_pending().lock() {
-        if *pending {
+        let next_action = if restore_focus {
+            PendingHideAction::HideAndRestoreFocus
+        } else {
+            PendingHideAction::Hide
+        };
+
+        if *pending != PendingHideAction::None {
+            if *pending == PendingHideAction::Hide && restore_focus {
+                *pending = PendingHideAction::HideAndRestoreFocus;
+            }
             return true;
         }
 
-        *pending = true;
+        *pending = next_action;
     }
 
     false
